@@ -51,8 +51,8 @@ async function loadStats() {
         const values = [
             { num: s.members_total, label: "MCC Members" },
             { num: s.members_with_orcid, label: "ORCID Linked" },
-            { num: s.projects_indexed.toLocaleString(), label: "NIH Projects" },
-            { num: s.publications_cached.toLocaleString(), label: "Publications" },
+            { num: s.members_with_pi_id, label: "NIH-Funded PIs" },
+            { num: (s.publications_total || 0).toLocaleString(), label: "Publications" },
         ];
         pills.forEach((pill, i) => {
             pill.querySelector(".stat-num").textContent = values[i].num;
@@ -186,7 +186,7 @@ function renderResearcher(d) {
 
 function renderFundingOnly(funding) {
     const fakeProfile = {
-        name: funding.name || `PI_ID: ${funding.pi_id}`,
+        name: funding.name || `NIH_ID: ${funding.pi_id}`,
         pi_id: funding.pi_id,
         orcid: "",
     };
@@ -227,15 +227,18 @@ function renderProfileHeader(d, showOrcid = true) {
             : `<span class="badge badge-gray">No ORCID</span>`;
     }
     badges += d.pi_id
-        ? `<span class="badge badge-amber">NIH PI</span>`
-        : `<span class="badge badge-gray">No NIH ID</span>`;
+        ? `<span class="badge badge-amber">NIH-Funded</span>`
+        : `<span class="badge badge-gray">No NIH_ID</span>`;
+
+    // Strip trailing ".0" from numeric IDs
+    const nihId = d.pi_id ? String(d.pi_id).replace(/\.0$/, "") : "";
 
     return `
         <div class="profile-header">
             <h2 class="profile-name">${escapeHtml(d.name || "—")} ${badges}</h2>
             <div class="profile-meta">
                 ${d.orcid ? `<div><strong>ORCID:</strong> <a href="https://orcid.org/${escapeHtml(d.orcid)}" target="_blank">${escapeHtml(d.orcid)}</a></div>` : ""}
-                ${d.pi_id ? `<div><strong>PI_ID:</strong> ${escapeHtml(String(d.pi_id))}</div>` : ""}
+                ${nihId ? `<div><strong>NIH_ID:</strong> ${escapeHtml(nihId)}</div>` : ""}
             </div>
         </div>
     `;
@@ -247,18 +250,38 @@ function renderPublicationCard(item) {
     const trimmedAbs = abstractText.length > 500
         ? abstractText.substring(0, 500) + "…"
         : abstractText;
+    const pmid = item.pmid || "";
+    const pubmedUrl = pmid ? `https://pubmed.ncbi.nlm.nih.gov/${encodeURIComponent(pmid)}/` : "";
+    const titleText = escapeHtml(item.title || "Untitled");
+
+    if (pubmedUrl) {
+        return `
+            <a class="result-card-link" href="${pubmedUrl}" target="_blank" rel="noopener">
+                <div class="result-card pub-card">
+                    <h3 class="pub-title-link">${titleText}</h3>
+                    <div class="meta-line">
+                        <strong>Authors:</strong> ${escapeHtml(item.authors || "N/A")}
+                    </div>
+                    <div class="meta-line">
+                        <strong>Journal:</strong> ${escapeHtml(item.journal || "N/A")} · <strong>Date:</strong> ${escapeHtml(item.pub_date || "N/A")} · <strong>PMID:</strong> ${escapeHtml(pmid)}
+                    </div>
+                    ${trimmedAbs ? `<div class="abstract">${escapeHtml(trimmedAbs)}</div>` : ""}
+                    <div class="doi-link">View on PubMed →</div>
+                </div>
+            </a>
+        `;
+    }
+
     return `
-        <div class="result-card">
-            <h3>${escapeHtml(item.title || "Untitled")}</h3>
+        <div class="result-card pub-card">
+            <h3>${titleText}</h3>
             <div class="meta-line">
                 <strong>Authors:</strong> ${escapeHtml(item.authors || "N/A")}
             </div>
             <div class="meta-line">
-                <strong>Journal:</strong> ${escapeHtml(item.journal || "N/A")} · <strong>Date:</strong> ${escapeHtml(item.pub_date || "N/A")} · <strong>PMID:</strong>
-                <a href="https://pubmed.ncbi.nlm.nih.gov/${encodeURIComponent(item.pmid || "")}" target="_blank">${escapeHtml(item.pmid || "—")}</a>
+                <strong>Journal:</strong> ${escapeHtml(item.journal || "N/A")} · <strong>Date:</strong> ${escapeHtml(item.pub_date || "N/A")}
             </div>
             ${trimmedAbs ? `<div class="abstract">${escapeHtml(trimmedAbs)}</div>` : ""}
-            ${item.doi ? `<div class="doi-link"><a href="https://doi.org/${escapeHtml(item.doi)}" target="_blank">DOI: ${escapeHtml(item.doi)} →</a></div>` : ""}
         </div>
     `;
 }

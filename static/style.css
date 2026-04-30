@@ -416,11 +416,36 @@ main.container {
     border-radius: var(--radius-md);
     padding: 22px 26px;
     margin-bottom: 16px;
-    transition: box-shadow 0.2s, border-color 0.2s;
+    transition: box-shadow 0.2s, border-color 0.2s, transform 0.15s;
 }
 .result-card:hover {
     box-shadow: var(--shadow-md);
     border-color: var(--neutral-20);
+}
+
+/* Card-as-link (publications) */
+a.result-card-link {
+    display: block;
+    color: inherit;
+    text-decoration: none;
+    margin-bottom: 16px;
+}
+a.result-card-link:hover { text-decoration: none; }
+a.result-card-link .result-card { margin-bottom: 0; cursor: pointer; }
+a.result-card-link:hover .result-card {
+    border-color: var(--wcm-red);
+    box-shadow: 0 6px 16px rgba(179,27,27,0.10), 0 2px 4px rgba(0,0,0,0.06);
+    transform: translateY(-1px);
+}
+a.result-card-link:hover .pub-title-link { color: var(--wcm-red); }
+.pub-title-link {
+    color: var(--black);
+    text-decoration: none;
+}
+.pub-card .doi-link {
+    color: var(--wcm-red);
+    font-weight: 600;
+    margin-top: 4px;
 }
 .result-card h3,
 .result-card h4 {

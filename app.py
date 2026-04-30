@@ -157,6 +157,48 @@ def pubmed_search_by_name(name: str, retmax: int = 30):
     return _parse_pubmed_xml(r2.text)
 
 
+_MONTHS = {
+    "Jan": "01", "Feb": "02", "Mar": "03", "Apr": "04",
+    "May": "05", "Jun": "06", "Jul": "07", "Aug": "08",
+    "Sep": "09", "Oct": "10", "Nov": "11", "Dec": "12",
+}
+
+
+def _extract_date(article_el):
+    """Return (display_date, iso_date) for sorting + UI display."""
+    import re
+
+    def _txt(parent, tag):
+        if parent is None:
+            return ""
+        el = parent.find(tag)
+        return (el.text or "").strip() if el is not None else ""
+
+    # Prefer ArticleDate (electronic pub date)
+    date_el = article_el.find(".//ArticleDate")
+    if date_el is not None:
+        y, m, d = _txt(date_el, "Year"), _txt(date_el, "Month"), _txt(date_el, "Day")
+        if y:
+            mm = _MONTHS.get(m, m).zfill(2) if m else "01"
+            dd = d.zfill(2) if d else "01"
+            return (f"{y}-{mm}-{dd}", f"{y}-{mm}-{dd}")
+
+    # Fall back to PubDate
+    pd_el = article_el.find(".//PubDate")
+    if pd_el is not None:
+        y = _txt(pd_el, "Year")
+        m = _txt(pd_el, "Month")
+        medline = _txt(pd_el, "MedlineDate")
+        if y:
+            mm = _MONTHS.get(m, m).zfill(2) if m else "01"
+            return (f"{y}{(' ' + m) if m else ''}", f"{y}-{mm}-01")
+        if medline:
+            yr = re.match(r"\d{4}", medline)
+            return (medline, f"{yr.group(0)}-01-01" if yr else "")
+
+    return ("", "")
+
+
 def _parse_pubmed_xml(xml_text: str):
     root = ET.fromstring(xml_text)
     out = []
@@ -166,7 +208,7 @@ def _parse_pubmed_xml(xml_text: str):
         abstract_parts = art.findall(".//Abstract/AbstractText")
         abstract = " ".join("".join(a.itertext()) for a in abstract_parts)
         journal = art.findtext(".//Journal/Title", default="")
-        year = art.findtext(".//PubDate/Year", default="") or art.findtext(".//PubDate/MedlineDate", default="")
+        pub_date, iso_date = _extract_date(art)
         authors = []
         for au in art.findall(".//Author"):
             ln = au.findtext("LastName", default="")
@@ -181,8 +223,10 @@ def _parse_pubmed_xml(xml_text: str):
         out.append({
             "pmid": pmid, "title": title, "abstract": abstract,
             "authors": "; ".join(authors), "journal": journal,
-            "pub_date": year, "doi": doi,
+            "pub_date": pub_date, "iso_date": iso_date, "doi": doi,
         })
+    # Sort newest first
+    out.sort(key=lambda p: (p.get("iso_date") or "", p.get("pmid") or ""), reverse=True)
     return out
 
 
@@ -272,11 +316,22 @@ def api_stats():
     members_with_orcid = sum(1 for m in members if m["orcid"])
     members_with_pi_id = sum(1 for m in members if m["pi_id"])
 
+    # Total publications across all MCC members (from Sheet2 PUB_COUNT)
+    total_pubs = 0
+    for m in members:
+        try:
+            n = m.get("pub_count")
+            if n is not None and n != "":
+                total_pubs += int(float(n))
+        except (ValueError, TypeError):
+            continue
+
     return jsonify({
         "members_total": len(members),
         "members_with_orcid": members_with_orcid,
         "members_with_pi_id": members_with_pi_id,
         "projects_indexed": proj_n,
+        "publications_total": total_pubs,
         "publications_cached": pub_n,
         "pis_in_db": pi_n,
     })

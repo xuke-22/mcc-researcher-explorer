@@ -209,21 +209,55 @@ def _parse_article(article_el) -> Dict:
     journal_el = article_el.find(".//Journal/Title")
     journal = journal_el.text if journal_el is not None else ""
 
-    # Date
+    # Date — read child text safely (Element with no children is falsy in ET, so
+    # avoid `or` short-circuit; use explicit `is not None` checks)
+    def _txt(parent, tag):
+        if parent is None:
+            return ""
+        el = parent.find(tag)
+        return (el.text or "").strip() if el is not None else ""
+
+    _MONTHS = {
+        "Jan": "01", "Feb": "02", "Mar": "03", "Apr": "04",
+        "May": "05", "Jun": "06", "Jul": "07", "Aug": "08",
+        "Sep": "09", "Oct": "10", "Nov": "11", "Dec": "12",
+    }
+
+    pub_date = ""
+    iso_date = ""
+
+    # Prefer <ArticleDate> (electronic pub date) — usually a clean ISO date
     date_el = article_el.find(".//ArticleDate")
     if date_el is not None:
-        y = (date_el.find("Year") or type("", (), {"text": ""})()).text or ""
-        m = (date_el.find("Month") or type("", (), {"text": ""})()).text or ""
-        d = (date_el.find("Day") or type("", (), {"text": ""})()).text or ""
-        pub_date = f"{y}-{m}-{d}" if y else ""
-    else:
+        y, m, d = _txt(date_el, "Year"), _txt(date_el, "Month"), _txt(date_el, "Day")
+        if y:
+            mm = _MONTHS.get(m, m).zfill(2) if m else "01"
+            dd = d.zfill(2) if d else "01"
+            iso_date = f"{y}-{mm}-{dd}"
+            pub_date = iso_date
+
+    # Fall back to <PubDate>
+    if not pub_date:
         pub_date_el = article_el.find(".//PubDate")
         if pub_date_el is not None:
-            y = (pub_date_el.find("Year") or type("", (), {"text": ""})()).text or ""
-            m = (pub_date_el.find("MedlineDate") or pub_date_el.find("Month") or type("", (), {"text": ""})()).text or ""
-            pub_date = f"{y} {m}".strip()
-        else:
-            pub_date = ""
+            y = _txt(pub_date_el, "Year")
+            m = _txt(pub_date_el, "Month")
+            d = _txt(pub_date_el, "Day")
+            medline = _txt(pub_date_el, "MedlineDate")
+            if y:
+                mm = _MONTHS.get(m, m).zfill(2) if m else "01"
+                dd = d.zfill(2) if d else "01"
+                iso_date = f"{y}-{mm}-{dd}"
+                # Display: "2024 Mar" or just "2024" if no month
+                pub_date = f"{y}{(' ' + m) if m else ''}".strip()
+            elif medline:
+                # MedlineDate is freeform like "2024 Spring" or "2024 Mar-Apr"
+                # Try to extract a 4-digit year for sorting.
+                import re
+                yr_match = re.match(r"\d{4}", medline)
+                if yr_match:
+                    iso_date = f"{yr_match.group(0)}-01-01"
+                pub_date = medline
 
     # DOI
     doi = ""
@@ -239,6 +273,7 @@ def _parse_article(article_el) -> Dict:
         "authors": authors,
         "journal": journal,
         "pub_date": pub_date,
+        "iso_date": iso_date,  # for sorting
         "doi": doi,
     }
 
@@ -280,6 +315,11 @@ def lookup_publications(orcid: str, save_to_db: bool = True) -> Dict:
         print("\n[3] Fetching article details from PubMed...")
         publications = fetch_pubmed_articles(pmids)
         print(f"    Retrieved {len(publications)} articles with metadata")
+        # Sort by ISO date descending (newest first); fall back to PMID
+        publications.sort(
+            key=lambda p: (p.get("iso_date") or "", p.get("pmid") or ""),
+            reverse=True,
+        )
 
     # Step 4: Save to DB
     if save_to_db and publications:
