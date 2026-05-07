@@ -185,12 +185,13 @@ function renderResearcher(d) {
 }
 
 function renderFundingOnly(funding) {
-    const fakeProfile = {
+    const profile = {
         name: funding.name || `NIH_ID: ${funding.pi_id}`,
         pi_id: funding.pi_id,
-        orcid: "",
+        orcid: funding.orcid || "",
     };
-    let html = renderProfileHeader(fakeProfile, /*showOrcid*/ false);
+    // Show ORCID badge only if we actually got one back (i.e. roster match)
+    let html = renderProfileHeader(profile, /*showOrcid*/ !!funding.orcid);
     html += `<div class="section-block">`;
     html += `<h2 class="section-title">NIH Funding</h2>`;
     html += renderFundingSummary(funding);

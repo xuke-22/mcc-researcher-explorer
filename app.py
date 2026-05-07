@@ -120,6 +120,18 @@ def find_members_by_query(query: str, limit: int = 20):
     return matches[:limit]
 
 
+def find_member_by_pi_id(pi_id):
+    """Reverse lookup: given a PI_ID, return the matching member (or None)."""
+    if pi_id in (None, ""):
+        return None
+    target = str(pi_id).strip().rstrip(".0").rstrip(".")
+    for m in load_members():
+        mid = str(m.get("pi_id") or "").strip().rstrip(".0").rstrip(".")
+        if mid and mid == target:
+            return m
+    return None
+
+
 # ════════════════════════════════════════════════════════════════════
 # Database helpers
 # ════════════════════════════════════════════════════════════════════
@@ -256,6 +268,7 @@ def fetch_nih_funding_by_pi_id(pi_id: int, limit: int = 100):
 
     projects = []
     total_funding = 0
+    pi_name_from_api = ""
     for p in results:
         amount = p.get("award_amount") or 0
         try:
@@ -264,6 +277,23 @@ def fetch_nih_funding_by_pi_id(pi_id: int, limit: int = 100):
             pass
         org = (p.get("organization") or {}).get("org_name", "") or ""
         agency = (p.get("agency_ic_admin") or {}).get("name", "") or ""
+
+        # Pull PI name from the first matching record's principal_investigators
+        if not pi_name_from_api:
+            for pi in (p.get("principal_investigators") or []):
+                if isinstance(pi, dict) and (pi.get("profile_id") == pi_id or
+                                             str(pi.get("profile_id") or "") == str(pi_id)):
+                    pi_name_from_api = pi.get("full_name") or ""
+                    if pi_name_from_api:
+                        break
+            # Fall back to first contact PI if no exact match found
+            if not pi_name_from_api:
+                for pi in (p.get("principal_investigators") or []):
+                    if isinstance(pi, dict) and pi.get("is_contact_pi"):
+                        pi_name_from_api = pi.get("full_name") or ""
+                        if pi_name_from_api:
+                            break
+
         projects.append({
             "appl_id": p.get("appl_id"),
             "fiscal_year": p.get("fiscal_year"),
@@ -278,6 +308,7 @@ def fetch_nih_funding_by_pi_id(pi_id: int, limit: int = 100):
 
     return {
         "pi_id": pi_id,
+        "pi_name_from_api": pi_name_from_api,
         "total_projects": total,
         "total_funding": total_funding,
         "projects": projects,
@@ -440,7 +471,26 @@ def search_funding():
     except Exception as e:
         return jsonify({"error": f"NIH Reporter API error: {e}"})
 
-    funding["name"] = member["name"] if member else ""
+    # Resolve a researcher name in this priority order:
+    #   1. The member typed by the user (already validated above)
+    #   2. Local MCC roster lookup by NIH_ID
+    #   3. PI name returned in the NIH RePORTER project data itself
+    #   4. Empty (frontend will fall back to "NIH_ID: ...")
+    resolved_name = ""
+    resolved_orcid = ""
+    if member:
+        resolved_name = member["name"]
+        resolved_orcid = member.get("orcid", "")
+    else:
+        roster_match = find_member_by_pi_id(pi_id_int)
+        if roster_match:
+            resolved_name = roster_match["name"]
+            resolved_orcid = roster_match.get("orcid", "")
+        else:
+            resolved_name = funding.get("pi_name_from_api", "")
+
+    funding["name"] = resolved_name
+    funding["orcid"] = resolved_orcid
     return jsonify(funding)
 
 
