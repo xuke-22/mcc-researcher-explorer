@@ -352,6 +352,37 @@ main.container {
     min-height: 18px;
 }
 
+/* ─── YEAR FILTER ─────────────────────────────────────── */
+.year-filter {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 12px;
+    font-size: 14px;
+    color: var(--neutral-60);
+}
+.year-filter label {
+    font-weight: 600;
+    white-space: nowrap;
+}
+.year-input {
+    width: 90px;
+    padding: 8px 10px;
+    font-family: var(--font-sans);
+    font-size: 14px;
+    border: 2px solid var(--neutral-10);
+    border-radius: var(--radius-sm);
+    background: var(--white);
+    transition: border-color 0.2s;
+}
+.year-input:focus {
+    outline: none;
+    border-color: var(--wcm-red);
+}
+.year-dash {
+    color: var(--neutral-40);
+}
+
 /* ─── LOADING ─────────────────────────────────────────── */
 .loading {
     display: flex;
@@ -415,6 +446,38 @@ main.container {
 .badge-amber  { background: var(--wcm-amber); color: var(--white); }
 .badge-yellow { background: var(--wcm-yellow); color: var(--black); }
 .badge-gray   { background: var(--neutral-10); color: var(--neutral-60); }
+
+/* Program affiliation badges */
+.badge-program-cb      { background: #2563eb; color: var(--white); }
+.badge-program-cge     { background: #7c3aed; color: var(--white); }
+.badge-program-cpc     { background: #059669; color: var(--white); }
+.badge-program-ct      { background: #d97706; color: var(--white); }
+.badge-program-im      { background: #0891b2; color: var(--white); }
+.badge-program-default { background: var(--neutral-40); color: var(--white); }
+
+/* VIVO profile name link */
+.profile-name-link {
+    color: var(--black);
+    text-decoration: none;
+    border-bottom: 2px solid var(--wcm-red);
+    transition: color 0.15s;
+}
+.profile-name-link:hover {
+    color: var(--wcm-red);
+    text-decoration: none;
+}
+
+/* MCC author highlighting in publication cards */
+.mcc-author {
+    font-weight: 700;
+    color: var(--wcm-red-dark);
+    background: rgba(179,27,27,0.07);
+    padding: 1px 4px;
+    border-radius: 3px;
+}
+.authors-line {
+    line-height: 1.7;
+}
 
 /* Section cards (publications & funding) */
 .section-block {
@@ -513,14 +576,6 @@ a.result-card-link:hover .pub-title-link { color: var(--wcm-red); }
 .funding-card {
     border-left: 4px solid var(--wcm-amber);
 }
-.funding-amount {
-    font-family: var(--font-serif);
-    font-size: 22px;
-    font-weight: 700;
-    color: var(--wcm-orange);
-    float: right;
-    margin-left: 16px;
-}
 .funding-meta {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
@@ -530,38 +585,6 @@ a.result-card-link:hover .pub-title-link { color: var(--wcm-red); }
     margin: 8px 0;
 }
 .funding-meta div strong { color: var(--black); font-weight: 600; }
-
-/* Funding summary banner */
-.funding-summary {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 16px;
-    margin-bottom: 24px;
-}
-.summary-card {
-    background: var(--neutral-05);
-    padding: 20px;
-    border-radius: var(--radius-md);
-    text-align: center;
-    border-top: 4px solid var(--wcm-amber);
-}
-.summary-card:nth-child(1) { border-top-color: var(--wcm-red); }
-.summary-card:nth-child(2) { border-top-color: var(--wcm-orange); }
-.summary-card:nth-child(3) { border-top-color: var(--wcm-yellow); }
-.summary-num {
-    font-family: var(--font-serif);
-    font-size: 28px;
-    font-weight: 700;
-    color: var(--black);
-    line-height: 1.1;
-}
-.summary-label {
-    font-size: 12px;
-    text-transform: uppercase;
-    letter-spacing: 0.6px;
-    color: var(--neutral-60);
-    margin-top: 6px;
-}
 
 .empty-state {
     text-align: center;
@@ -756,8 +779,7 @@ a.result-card-link:hover .pub-title-link { color: var(--wcm-red); }
     .tabs { overflow-x: auto; }
     .tab { padding: 12px 16px; font-size: 13px; white-space: nowrap; }
     .search-bar { flex-direction: column; }
-    .funding-summary { grid-template-columns: 1fr; }
-    .funding-amount { float: none; display: block; margin: 8px 0; }
+    .year-filter { flex-wrap: wrap; }
     .about-grid { grid-template-columns: 1fr; }
     .visit-grid { grid-template-columns: 1fr; }
     .visit-block { padding: 24px 22px; }

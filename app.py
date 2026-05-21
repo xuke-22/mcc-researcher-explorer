@@ -28,6 +28,7 @@ import ssl
 import xml.etree.ElementTree as ET
 
 import pandas as pd
+import openpyxl
 import requests
 from flask import Flask, jsonify, render_template, request
 
@@ -38,6 +39,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "lib"))
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, "data", "capstone.db")
 PI_EXCEL = os.path.join(BASE_DIR, "data", "RePORTER_PI_IDS_FY2025.xlsx")
+MEMBERS_EXCEL = os.path.join(BASE_DIR, "data", "MCC_Members_Jan_2026.xlsx")
+VIVO_EXCEL = os.path.join(BASE_DIR, "data", "All_MCC_Members_FY25.xlsx")
 
 # Tell capstone4 (and any descendant) which DB to use, before importing
 os.environ.setdefault("CAPSTONE_DB", DB_PATH)
@@ -56,6 +59,83 @@ app = Flask(__name__, static_folder="static", template_folder="templates")
 # ════════════════════════════════════════════════════════════════════
 _MEMBERS_CACHE = None
 
+PROGRAM_MAP = {
+    "Meyer Cancer Center: CB": "Cancer Biology",
+    "Meyer Cancer Center: CGE": "Cancer Genetics & Epigenetics",
+    "Meyer Cancer Center: CPC": "Cancer Prevention & Control",
+    "Meyer Cancer Center: CT": "Cancer Therapeutics",
+    "Meyer Cancer Center: ZY": "Immunology & Microbiology",
+    "Meyer Cancer Center": "Meyer Cancer Center",
+}
+
+PROGRAM_SHORT = {
+    "Cancer Biology": "CB",
+    "Cancer Genetics & Epigenetics": "CGE",
+    "Cancer Prevention & Control": "CPC",
+    "Cancer Therapeutics": "CT",
+    "Immunology & Microbiology": "IM",
+    "Meyer Cancer Center": "MCC",
+}
+
+
+def _load_program_data():
+    """Load program affiliations from MCC Members and VIVO links from the FY25 roster."""
+    program_map = {}
+    vivo_map = {}
+
+    # Program affiliations from MCC Members Jan 2026
+    try:
+        mdf = pd.read_excel(MEMBERS_EXCEL)
+        mdf = mdf.fillna("")
+        for _, row in mdf.iterrows():
+            name = str(row.get("Name", "")).strip()
+            if not name:
+                continue
+            prog_raw = str(row.get("Center: Program Area", "")).strip()
+            program_map[name.lower()] = PROGRAM_MAP.get(prog_raw, prog_raw)
+    except Exception as e:
+        print(f"[WARN] Could not load MCC members file: {e}")
+
+    # VIVO links from FY25 roster (uses CWID column + hyperlinks)
+    try:
+        wb = openpyxl.load_workbook(VIVO_EXCEL, data_only=True)
+
+        # Research Program members sheet has CWID + Name + Program
+        ws = wb["Research Program members"]
+        for row_cells in ws.iter_rows(min_row=2, max_col=3):
+            cwid_cell, name_cell, prog_cell = row_cells[0], row_cells[1], row_cells[2]
+            name = str(name_cell.value or "").strip()
+            cwid = str(cwid_cell.value or "").strip()
+            if name and cwid:
+                vivo_map[name.lower()] = f"https://vivo.weill.cornell.edu/display/cwid-{cwid}"
+
+        # ZY-clinical members sheet (Name column only, some have hyperlinks)
+        ws2 = wb["ZY-clinical members"]
+        for row_cells in ws2.iter_rows(min_row=2, max_col=1):
+            cell = row_cells[0]
+            name = str(cell.value or "").strip()
+            if not name:
+                continue
+            if cell.hyperlink and cell.hyperlink.target and "vivo.weill.cornell.edu" in cell.hyperlink.target:
+                vivo_map[name.lower()] = cell.hyperlink.target
+
+        wb.close()
+    except Exception as e:
+        print(f"[WARN] Could not load VIVO roster: {e}")
+
+    return program_map, vivo_map
+
+
+_PROGRAM_CACHE = None
+_VIVO_CACHE = None
+
+
+def _get_program_and_vivo():
+    global _PROGRAM_CACHE, _VIVO_CACHE
+    if _PROGRAM_CACHE is None:
+        _PROGRAM_CACHE, _VIVO_CACHE = _load_program_data()
+    return _PROGRAM_CACHE, _VIVO_CACHE
+
 
 def load_members():
     """Load all MCC members from Sheet2 of the Excel file."""
@@ -65,6 +145,7 @@ def load_members():
 
     df = pd.read_excel(PI_EXCEL, sheet_name="Sheet2")
     df = df.fillna("")
+    program_data, vivo_data = _get_program_and_vivo()
     members = []
     for _, row in df.iterrows():
         name = str(row.get("PI_NAMEs", "")).strip()
@@ -73,11 +154,15 @@ def load_members():
         pi_id = str(row.get("PI_IDS", "")).strip()
         orcid = str(row.get("ORCID", "")).strip()
         pub_count = row.get("PUB_COUNT", "")
+        program = program_data.get(name.lower(), "")
+        vivo_url = vivo_data.get(name.lower(), "")
         members.append({
             "name": name,
             "pi_id": "" if pi_id.lower() == "nan" else pi_id,
             "orcid": "" if orcid.lower() == "nan" else orcid,
             "pub_count": pub_count if pub_count != "" else None,
+            "program": program,
+            "vivo_url": vivo_url,
         })
     _MEMBERS_CACHE = members
     return members
@@ -368,21 +453,51 @@ def api_stats():
     })
 
 
+@app.route("/api/mcc_names")
+def api_mcc_names():
+    """Return all MCC member names for author highlighting."""
+    members = load_members()
+    names = []
+    for m in members:
+        raw = m["name"]
+        names.append(raw)
+        if "," in raw:
+            last, first = [s.strip() for s in raw.split(",", 1)]
+            first_short = first.split()[0] if first else ""
+            if first_short:
+                names.append(f"{first_short} {last}")
+                names.append(f"{first} {last}")
+    return jsonify(sorted(set(names)))
+
+
 @app.route("/search")
 def search_keyword():
-    """Keyword search across cached publications."""
+    """Keyword search across cached publications with optional year range."""
     q = request.args.get("q", "").strip()
     if not q:
         return jsonify([])
 
-    conn = get_db()
-    rows = conn.execute("""
+    year_start = request.args.get("year_start", "").strip()
+    year_end = request.args.get("year_end", "").strip()
+
+    sql = """
         SELECT pmid, title, abstract, authors, journal, pub_date, doi, orcid
         FROM publication
-        WHERE title LIKE ? OR abstract LIKE ?
-        ORDER BY pub_date DESC
-        LIMIT 50
-    """, (f"%{q}%", f"%{q}%")).fetchall()
+        WHERE (title LIKE ? OR abstract LIKE ?)
+    """
+    params = [f"%{q}%", f"%{q}%"]
+
+    if year_start:
+        sql += " AND pub_date >= ?"
+        params.append(year_start)
+    if year_end:
+        sql += " AND pub_date <= ?"
+        params.append(f"{year_end}-12-31")
+
+    sql += " ORDER BY pub_date DESC LIMIT 100"
+
+    conn = get_db()
+    rows = conn.execute(sql, params).fetchall()
     conn.close()
     return jsonify([dict(r) for r in rows])
 
@@ -434,6 +549,8 @@ def search_name():
         "name": member["name"],
         "orcid": member["orcid"],
         "pi_id": member["pi_id"],
+        "program": member.get("program", ""),
+        "vivo_url": member.get("vivo_url", ""),
         "publication_count": len(publications),
         "source": source,
         "publications": publications,
@@ -509,6 +626,8 @@ def researcher_combined():
         "name": member["name"],
         "orcid": member["orcid"],
         "pi_id": member["pi_id"],
+        "program": member.get("program", ""),
+        "vivo_url": member.get("vivo_url", ""),
         "publications": [],
         "publication_count": 0,
         "publication_source": "none",
@@ -544,6 +663,74 @@ def researcher_combined():
         response["funding_error"] = "No NIH PI_ID on file for this member."
 
     return jsonify(response)
+
+
+@app.route("/search_funding_keyword")
+def search_funding_keyword():
+    """Search NIH funding by keyword/topic across all MCC members."""
+    q = request.args.get("q", "").strip()
+    if not q:
+        return jsonify({"error": "Please provide a search term."})
+
+    members = load_members()
+    pi_ids = [int(float(m["pi_id"])) for m in members if m["pi_id"]]
+
+    if not pi_ids:
+        return jsonify({"error": "No MCC members with NIH PI_IDs found."})
+
+    payload = {
+        "criteria": {
+            "pi_profile_ids": pi_ids,
+            "advanced_text_search": {
+                "operator": "and",
+                "search_field": "projecttitle,terms,abstracttext",
+                "search_text": q,
+            },
+        },
+        "include_fields": [
+            "ApplId", "FiscalYear", "ProjectNum", "ProjectTitle",
+            "ProjectStartDate", "ProjectEndDate",
+            "AgencyIcAdmin", "Organization", "PrincipalInvestigators",
+            "AbstractText", "Terms",
+        ],
+        "offset": 0,
+        "limit": 50,
+        "sort_field": "fiscal_year",
+        "sort_order": "desc",
+    }
+    try:
+        r = requests.post(NIH_API, json=payload, timeout=60)
+        r.raise_for_status()
+        data = r.json()
+    except Exception as e:
+        return jsonify({"error": f"NIH Reporter API error: {e}"})
+
+    results = data.get("results") or []
+    total = (data.get("meta") or {}).get("total", 0)
+
+    projects = []
+    for p in results:
+        org = (p.get("organization") or {}).get("org_name", "") or ""
+        agency = (p.get("agency_ic_admin") or {}).get("name", "") or ""
+        pis = p.get("principal_investigators") or []
+        pi_names = [pi.get("full_name", "") for pi in pis if isinstance(pi, dict) and pi.get("full_name")]
+        projects.append({
+            "appl_id": p.get("appl_id"),
+            "fiscal_year": p.get("fiscal_year"),
+            "project_num": p.get("project_num"),
+            "title": p.get("project_title"),
+            "start_date": p.get("project_start_date"),
+            "end_date": p.get("project_end_date"),
+            "agency": agency,
+            "organization": org,
+            "pi_names": "; ".join(pi_names),
+        })
+
+    return jsonify({
+        "query": q,
+        "total_results": total,
+        "projects": projects,
+    })
 
 
 # ════════════════════════════════════════════════════════════════════

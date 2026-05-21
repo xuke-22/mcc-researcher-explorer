@@ -6,12 +6,24 @@ const $ = (id) => document.getElementById(id);
 const resultsEl = () => $("results");
 const loadingEl = () => $("loading");
 
+let _mccNames = [];
+
 // ─── On Load ────────────────────────────────────────────
 document.addEventListener("DOMContentLoaded", () => {
     initTabs();
     loadStats();
     initEnterKey();
+    loadMccNames();
 });
+
+async function loadMccNames() {
+    try {
+        const r = await fetch("/api/mcc_names");
+        _mccNames = await r.json();
+    } catch (e) {
+        console.warn("Could not load MCC names:", e);
+    }
+}
 
 // ─── Tabs ────────────────────────────────────────────
 function initTabs() {
@@ -31,8 +43,7 @@ function initTabs() {
 function initEnterKey() {
     bindEnter("researcherInput", searchResearcher);
     bindEnter("keywordInput", searchKeyword);
-    bindEnter("fundingNameInput", searchFundingByName);
-    bindEnter("fundingPiInput", searchFundingByPiId);
+    bindEnter("fundingKeywordInput", searchFundingKeyword);
 }
 function bindEnter(id, fn) {
     const el = $(id);
@@ -94,14 +105,21 @@ async function searchResearcher() {
     }
 }
 
-// ─── Search: keyword ────────────────────────────────────
+// ─── Search: keyword (independent of researcher) ────────
 async function searchKeyword() {
     const q = $("keywordInput").value.trim();
     if (!q) { showError("Please enter a keyword."); return; }
 
+    const yearStart = $("yearStart") ? $("yearStart").value : "";
+    const yearEnd = $("yearEnd") ? $("yearEnd").value : "";
+
+    let url = `/search?q=${encodeURIComponent(q)}`;
+    if (yearStart) url += `&year_start=${encodeURIComponent(yearStart)}`;
+    if (yearEnd) url += `&year_end=${encodeURIComponent(yearEnd)}`;
+
     showLoading();
     try {
-        const r = await fetch(`/search?q=${encodeURIComponent(q)}`);
+        const r = await fetch(url);
         const data = await r.json();
         hideLoading();
         renderKeywordResults(data, q);
@@ -110,37 +128,19 @@ async function searchKeyword() {
     }
 }
 
-// ─── Search: NIH funding by name ────────────────────────
-async function searchFundingByName() {
-    const name = $("fundingNameInput").value.trim();
-    if (!name) { showError("Please enter a member name."); return; }
+// ─── Search: NIH funding by keyword/topic ───────────────
+async function searchFundingKeyword() {
+    const q = $("fundingKeywordInput").value.trim();
+    if (!q) { showError("Please enter a topic or keyword."); return; }
 
     showLoading();
     try {
-        const r = await fetch(`/search_funding?name=${encodeURIComponent(name)}`);
+        const r = await fetch(`/search_funding_keyword?q=${encodeURIComponent(q)}`);
         const data = await r.json();
         hideLoading();
 
         if (data.error) { showError(data.error); return; }
-        renderFundingOnly(data);
-    } catch (e) {
-        showError("Network error: " + e.message);
-    }
-}
-
-// ─── Search: NIH funding by PI_ID ───────────────────────
-async function searchFundingByPiId() {
-    const pid = $("fundingPiInput").value.trim();
-    if (!pid) { showError("Please enter a PI_ID."); return; }
-
-    showLoading();
-    try {
-        const r = await fetch(`/search_funding?pi_id=${encodeURIComponent(pid)}`);
-        const data = await r.json();
-        hideLoading();
-
-        if (data.error) { showError(data.error); return; }
-        renderFundingOnly(data);
+        renderFundingKeywordResults(data);
     } catch (e) {
         showError("Network error: " + e.message);
     }
@@ -165,13 +165,12 @@ function renderResearcher(d) {
     }
     html += `</div>`;
 
-    // Funding
+    // Funding — show project list without dollar amounts
     html += `<div class="section-block">`;
     html += `<h2 class="section-title">NIH Funding</h2>`;
     if (d.funding) {
-        html += renderFundingSummary(d.funding);
         if (d.funding.projects && d.funding.projects.length > 0) {
-            html += `<div class="section-meta">Showing ${d.funding.projects.length} of ${d.funding.total_projects.toLocaleString()} project${d.funding.total_projects === 1 ? "" : "s"} (most recent first)</div>`;
+            html += `<div class="section-meta">${d.funding.total_projects.toLocaleString()} NIH project${d.funding.total_projects === 1 ? "" : "s"} on record · showing ${d.funding.projects.length} most recent</div>`;
             html += d.funding.projects.map(renderFundingCard).join("");
         } else {
             html += renderEmpty("No NIH projects found", "The PI_ID returned zero projects from NIH Reporter.");
@@ -184,23 +183,16 @@ function renderResearcher(d) {
     resultsEl().innerHTML = html;
 }
 
-function renderFundingOnly(funding) {
-    const profile = {
-        name: funding.name || `NIH_ID: ${funding.pi_id}`,
-        pi_id: funding.pi_id,
-        orcid: funding.orcid || "",
-    };
-    // Show ORCID badge only if we actually got one back (i.e. roster match)
-    let html = renderProfileHeader(profile, /*showOrcid*/ !!funding.orcid);
-    html += `<div class="section-block">`;
-    html += `<h2 class="section-title">NIH Funding</h2>`;
-    html += renderFundingSummary(funding);
-    if (funding.projects && funding.projects.length > 0) {
-        html += `<div class="section-meta">Showing ${funding.projects.length} of ${funding.total_projects.toLocaleString()} project${funding.total_projects === 1 ? "" : "s"} (most recent first)</div>`;
-        html += funding.projects.map(renderFundingCard).join("");
-    } else {
-        html += renderEmpty("No NIH projects found", "The PI_ID returned zero projects from NIH Reporter.");
+function renderFundingKeywordResults(data) {
+    if (!data.projects || data.projects.length === 0) {
+        resultsEl().innerHTML = renderEmpty("No NIH projects match",
+            `No MCC-related projects found for "${escapeHtml(data.query)}".`);
+        return;
     }
+    let html = `<div class="section-block">`;
+    html += `<h2 class="section-title">NIH Funding Results</h2>`;
+    html += `<div class="section-meta">${data.total_results.toLocaleString()} project${data.total_results === 1 ? "" : "s"} matching "<strong>${escapeHtml(data.query)}</strong>" across MCC members</div>`;
+    html += data.projects.map(renderFundingCardKeyword).join("");
     html += `</div>`;
     resultsEl().innerHTML = html;
 }
@@ -220,23 +212,24 @@ function renderKeywordResults(data, q) {
 }
 
 // ─── Profile header ────────────────────────────────────
-function renderProfileHeader(d, showOrcid = true) {
+function renderProfileHeader(d) {
     let badges = "";
-    if (showOrcid) {
-        badges += d.orcid
-            ? `<span class="badge badge-red">ORCID</span>`
-            : `<span class="badge badge-gray">No ORCID</span>`;
+    if (d.pi_id) {
+        badges += `<span class="badge badge-amber">NIH Funded</span>`;
     }
-    badges += d.pi_id
-        ? `<span class="badge badge-amber">NIH-Funded</span>`
-        : `<span class="badge badge-gray">No NIH_ID</span>`;
+    if (d.program) {
+        const colorClass = programBadgeClass(d.program);
+        badges += `<span class="badge ${colorClass}">${escapeHtml(d.program)}</span>`;
+    }
 
-    // Strip trailing ".0" from numeric IDs
     const nihId = d.pi_id ? String(d.pi_id).replace(/\.0$/, "") : "";
+    const nameHtml = d.vivo_url
+        ? `<a href="${escapeHtml(d.vivo_url)}" target="_blank" class="profile-name-link">${escapeHtml(d.name || "—")}</a>`
+        : escapeHtml(d.name || "—");
 
     return `
         <div class="profile-header">
-            <h2 class="profile-name">${escapeHtml(d.name || "—")} ${badges}</h2>
+            <h2 class="profile-name">${nameHtml} ${badges}</h2>
             <div class="profile-meta">
                 ${d.orcid ? `<div><strong>ORCID:</strong> <a href="https://orcid.org/${escapeHtml(d.orcid)}" target="_blank">${escapeHtml(d.orcid)}</a></div>` : ""}
                 ${nihId ? `<div><strong>NIH_ID:</strong> ${escapeHtml(nihId)}</div>` : ""}
@@ -245,7 +238,7 @@ function renderProfileHeader(d, showOrcid = true) {
     `;
 }
 
-// ─── Publication card ─────────────────────────────────
+// ─── Publication card with MCC author highlighting ──────
 function renderPublicationCard(item) {
     const abstractText = (item.abstract || "").trim();
     const trimmedAbs = abstractText.length > 500
@@ -255,44 +248,35 @@ function renderPublicationCard(item) {
     const pubmedUrl = pmid ? `https://pubmed.ncbi.nlm.nih.gov/${encodeURIComponent(pmid)}/` : "";
     const titleText = escapeHtml(item.title || "Untitled");
 
+    const authorsHtml = highlightMccAuthors(item.authors || "N/A");
+
+    const cardInner = `
+        <h3 class="pub-title-link">${titleText}</h3>
+        <div class="meta-line authors-line">
+            <strong>Authors:</strong> ${authorsHtml}
+        </div>
+        <div class="meta-line">
+            <strong>Journal:</strong> ${escapeHtml(item.journal || "N/A")} · <strong>Date:</strong> ${escapeHtml(item.pub_date || "N/A")} · <strong>PMID:</strong> ${escapeHtml(pmid)}
+        </div>
+        ${trimmedAbs ? `<div class="abstract">${escapeHtml(trimmedAbs)}</div>` : ""}
+        ${pubmedUrl ? `<div class="doi-link">View on PubMed →</div>` : ""}
+    `;
+
     if (pubmedUrl) {
         return `
             <a class="result-card-link" href="${pubmedUrl}" target="_blank" rel="noopener">
-                <div class="result-card pub-card">
-                    <h3 class="pub-title-link">${titleText}</h3>
-                    <div class="meta-line">
-                        <strong>Authors:</strong> ${escapeHtml(item.authors || "N/A")}
-                    </div>
-                    <div class="meta-line">
-                        <strong>Journal:</strong> ${escapeHtml(item.journal || "N/A")} · <strong>Date:</strong> ${escapeHtml(item.pub_date || "N/A")} · <strong>PMID:</strong> ${escapeHtml(pmid)}
-                    </div>
-                    ${trimmedAbs ? `<div class="abstract">${escapeHtml(trimmedAbs)}</div>` : ""}
-                    <div class="doi-link">View on PubMed →</div>
-                </div>
+                <div class="result-card pub-card">${cardInner}</div>
             </a>
         `;
     }
 
-    return `
-        <div class="result-card pub-card">
-            <h3>${titleText}</h3>
-            <div class="meta-line">
-                <strong>Authors:</strong> ${escapeHtml(item.authors || "N/A")}
-            </div>
-            <div class="meta-line">
-                <strong>Journal:</strong> ${escapeHtml(item.journal || "N/A")} · <strong>Date:</strong> ${escapeHtml(item.pub_date || "N/A")}
-            </div>
-            ${trimmedAbs ? `<div class="abstract">${escapeHtml(trimmedAbs)}</div>` : ""}
-        </div>
-    `;
+    return `<div class="result-card pub-card">${cardInner}</div>`;
 }
 
-// ─── Funding card ─────────────────────────────────
+// ─── Funding card (no dollar amounts) ───────────────────
 function renderFundingCard(p) {
-    const amt = p.award_amount ? `$${Number(p.award_amount).toLocaleString()}` : "—";
     return `
         <div class="result-card funding-card">
-            <div class="funding-amount">${amt}</div>
             <h4>${escapeHtml(p.title || "Untitled project")}</h4>
             <div class="funding-meta">
                 <div><strong>Project #:</strong> ${escapeHtml(p.project_num || "—")}</div>
@@ -306,27 +290,52 @@ function renderFundingCard(p) {
     `;
 }
 
-// ─── Funding summary ─────────────────────────────────
-function renderFundingSummary(f) {
-    const totalAmt = f.total_funding
-        ? `$${Number(f.total_funding).toLocaleString()}`
-        : "—";
+// ─── Funding card for keyword results (with PI names) ───
+function renderFundingCardKeyword(p) {
     return `
-        <div class="funding-summary">
-            <div class="summary-card">
-                <div class="summary-num">${(f.total_projects || 0).toLocaleString()}</div>
-                <div class="summary-label">Total Projects</div>
-            </div>
-            <div class="summary-card">
-                <div class="summary-num">${(f.projects ? f.projects.length : 0).toLocaleString()}</div>
-                <div class="summary-label">Recent Shown</div>
-            </div>
-            <div class="summary-card">
-                <div class="summary-num">${totalAmt}</div>
-                <div class="summary-label">Funding (Visible)</div>
+        <div class="result-card funding-card">
+            <h4>${escapeHtml(p.title || "Untitled project")}</h4>
+            <div class="funding-meta">
+                <div><strong>PI(s):</strong> ${escapeHtml(p.pi_names || "—")}</div>
+                <div><strong>Project #:</strong> ${escapeHtml(p.project_num || "—")}</div>
+                <div><strong>Fiscal Year:</strong> ${escapeHtml(String(p.fiscal_year || "—"))}</div>
+                <div><strong>Agency:</strong> ${escapeHtml(p.agency || "—")}</div>
+                <div><strong>Start:</strong> ${escapeHtml(p.start_date || "—")}</div>
+                <div><strong>End:</strong> ${escapeHtml(p.end_date || "—")}</div>
+                <div><strong>Org:</strong> ${escapeHtml(p.organization || "—")}</div>
             </div>
         </div>
     `;
+}
+
+// ─── MCC author highlighting ────────────────────────────
+function highlightMccAuthors(authorsStr) {
+    if (!_mccNames.length) return escapeHtml(authorsStr);
+
+    const authors = authorsStr.split(";").map(a => a.trim()).filter(Boolean);
+    return authors.map(author => {
+        const authorLower = author.toLowerCase().trim();
+        const isMcc = _mccNames.some(name => {
+            const nameLower = name.toLowerCase();
+            return authorLower === nameLower
+                || authorLower.includes(nameLower)
+                || nameLower.includes(authorLower);
+        });
+        if (isMcc) {
+            return `<span class="mcc-author">${escapeHtml(author)}</span>`;
+        }
+        return escapeHtml(author);
+    }).join("; ");
+}
+
+// ─── Program badge color mapping ────────────────────────
+function programBadgeClass(program) {
+    if (program.includes("Biology")) return "badge-program-cb";
+    if (program.includes("Genetics")) return "badge-program-cge";
+    if (program.includes("Prevention") || program.includes("Control")) return "badge-program-cpc";
+    if (program.includes("Therapeutics")) return "badge-program-ct";
+    if (program.includes("Immunology")) return "badge-program-im";
+    return "badge-program-default";
 }
 
 // ─── Helpers ─────────────────────────────────
