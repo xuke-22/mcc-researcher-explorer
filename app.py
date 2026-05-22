@@ -83,7 +83,7 @@ def _load_program_data():
     program_map = {}
     vivo_map = {}
 
-    # Program affiliations from MCC Members Jan 2026
+    # Program affiliations + email-based VIVO fallback from MCC Members Jan 2026
     try:
         mdf = pd.read_excel(MEMBERS_EXCEL)
         mdf = mdf.fillna("")
@@ -93,6 +93,11 @@ def _load_program_data():
                 continue
             prog_raw = str(row.get("Center: Program Area", "")).strip()
             program_map[name.lower()] = PROGRAM_MAP.get(prog_raw, prog_raw)
+            email = str(row.get("Contact: Email", "")).strip()
+            if email and "@" in email:
+                cwid = email.split("@")[0]
+                vivo_map.setdefault(name.lower(),
+                                    f"https://vivo.weill.cornell.edu/display/cwid-{cwid}")
     except Exception as e:
         print(f"[WARN] Could not load MCC members file: {e}")
 
@@ -137,6 +142,32 @@ def _get_program_and_vivo():
     return _PROGRAM_CACHE, _VIVO_CACHE
 
 
+def _fuzzy_lookup(data_map, name):
+    """Match by exact key first, then by last name + first-name prefix."""
+    key = name.lower()
+    if key in data_map:
+        return data_map[key]
+
+    if "," not in key:
+        return ""
+    last, first = key.split(",", 1)
+    last = last.strip()
+    first = first.strip().split()[0] if first.strip() else ""
+
+    for map_key, val in data_map.items():
+        if "," not in map_key:
+            continue
+        m_last, m_first = map_key.split(",", 1)
+        m_last = m_last.strip()
+        m_first = m_first.strip().split()[0] if m_first.strip() else ""
+        if last == m_last and first and m_first and (
+            first.startswith(m_first) or m_first.startswith(first)
+        ):
+            return val
+
+    return ""
+
+
 def load_members():
     """Load all MCC members from Sheet2 of the Excel file."""
     global _MEMBERS_CACHE
@@ -154,8 +185,8 @@ def load_members():
         pi_id = str(row.get("PI_IDS", "")).strip()
         orcid = str(row.get("ORCID", "")).strip()
         pub_count = row.get("PUB_COUNT", "")
-        program = program_data.get(name.lower(), "")
-        vivo_url = vivo_data.get(name.lower(), "")
+        program = _fuzzy_lookup(program_data, name)
+        vivo_url = _fuzzy_lookup(vivo_data, name)
         members.append({
             "name": name,
             "pi_id": "" if pi_id.lower() == "nan" else pi_id,
@@ -472,13 +503,14 @@ def api_mcc_names():
 
 @app.route("/search")
 def search_keyword():
-    """Keyword search across cached publications with optional year range."""
+    """Keyword search across cached publications with optional year range and researcher filter."""
     q = request.args.get("q", "").strip()
     if not q:
         return jsonify([])
 
     year_start = request.args.get("year_start", "").strip()
     year_end = request.args.get("year_end", "").strip()
+    researcher = request.args.get("researcher", "").strip()
 
     sql = """
         SELECT pmid, title, abstract, authors, journal, pub_date, doi, orcid
@@ -493,6 +525,15 @@ def search_keyword():
     if year_end:
         sql += " AND pub_date <= ?"
         params.append(f"{year_end}-12-31")
+
+    if researcher:
+        member = find_member_by_name(researcher)
+        if member and member["orcid"]:
+            sql += " AND orcid = ?"
+            params.append(member["orcid"])
+        else:
+            sql += " AND authors LIKE ?"
+            params.append(f"%{researcher}%")
 
     sql += " ORDER BY pub_date DESC LIMIT 100"
 

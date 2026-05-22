@@ -352,35 +352,86 @@ main.container {
     min-height: 18px;
 }
 
-/* ─── YEAR FILTER ─────────────────────────────────────── */
-.year-filter {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-top: 12px;
+/* ─── KEYWORD RESEARCHER FILTER ───────────────────────── */
+.keyword-researcher-bar {
+    margin-top: 10px;
+}
+.search-input-sm {
     font-size: 14px;
+    padding: 10px 14px;
+}
+
+/* ─── YEAR RANGE SLIDER ──────────────────────────────── */
+.year-slider-container {
+    margin-top: 18px;
+    max-width: 480px;
+}
+.year-slider-label {
+    font-size: 14px;
+    font-weight: 600;
     color: var(--neutral-60);
 }
-.year-filter label {
-    font-weight: 600;
-    white-space: nowrap;
-}
-.year-input {
-    width: 90px;
-    padding: 8px 10px;
-    font-family: var(--font-sans);
+.year-slider-values {
+    display: flex;
+    justify-content: space-between;
     font-size: 14px;
-    border: 2px solid var(--neutral-10);
-    border-radius: var(--radius-sm);
-    background: var(--white);
-    transition: border-color 0.2s;
+    font-weight: 700;
+    color: var(--wcm-red);
+    margin: 4px 0 2px;
 }
-.year-input:focus {
-    outline: none;
-    border-color: var(--wcm-red);
+.dual-slider {
+    position: relative;
+    height: 36px;
 }
-.year-dash {
-    color: var(--neutral-40);
+.slider-track-bg {
+    position: absolute;
+    top: 16px;
+    left: 0;
+    right: 0;
+    height: 4px;
+    background: var(--neutral-10);
+    border-radius: 2px;
+}
+.slider-track {
+    position: absolute;
+    top: 16px;
+    height: 4px;
+    background: var(--wcm-red);
+    border-radius: 2px;
+}
+.range-input {
+    position: absolute;
+    top: 6px;
+    left: 0;
+    width: 100%;
+    -webkit-appearance: none;
+    appearance: none;
+    background: transparent;
+    pointer-events: none;
+    margin: 0;
+    height: 24px;
+}
+.range-input::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: var(--wcm-red);
+    border: 2px solid var(--white);
+    box-shadow: 0 1px 3px rgba(0,0,0,0.25);
+    cursor: pointer;
+    pointer-events: auto;
+}
+.range-input::-moz-range-thumb {
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: var(--wcm-red);
+    border: 2px solid var(--white);
+    box-shadow: 0 1px 3px rgba(0,0,0,0.25);
+    cursor: pointer;
+    pointer-events: auto;
 }
 
 /* ─── LOADING ─────────────────────────────────────────── */
@@ -779,7 +830,7 @@ a.result-card-link:hover .pub-title-link { color: var(--wcm-red); }
     .tabs { overflow-x: auto; }
     .tab { padding: 12px 16px; font-size: 13px; white-space: nowrap; }
     .search-bar { flex-direction: column; }
-    .year-filter { flex-wrap: wrap; }
+    .year-slider-container { max-width: 100%; }
     .about-grid { grid-template-columns: 1fr; }
     .visit-grid { grid-template-columns: 1fr; }
     .visit-block { padding: 24px 22px; }

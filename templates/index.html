@@ -71,17 +71,27 @@
     <section class="tab-panel" id="panel-keyword">
         <div class="panel-header">
             <h2>Publication Keyword Search</h2>
-            <p>Search across the cached publication database (titles &amp; abstracts).</p>
+            <p>Search across all cached MCC publications (titles &amp; abstracts). Optionally filter by researcher.</p>
         </div>
         <div class="search-bar">
             <input type="text" id="keywordInput" class="search-input" placeholder="Search by keyword, e.g. immunotherapy, leukemia, melanoma">
             <button class="btn-primary" onclick="searchKeyword()">Search</button>
         </div>
-        <div class="year-filter">
-            <label>Year range:</label>
-            <input type="number" id="yearStart" class="year-input" placeholder="From" min="1990" max="2026">
-            <span class="year-dash">–</span>
-            <input type="number" id="yearEnd" class="year-input" placeholder="To" min="1990" max="2026">
+        <div class="search-bar keyword-researcher-bar">
+            <input type="text" id="keywordResearcherInput" class="search-input search-input-sm" placeholder="Filter by researcher (optional), e.g. Artis, David">
+        </div>
+        <div class="year-slider-container">
+            <label class="year-slider-label">Year range:</label>
+            <div class="year-slider-values">
+                <span id="yearMinLabel">2000</span>
+                <span id="yearMaxLabel">2026</span>
+            </div>
+            <div class="dual-slider">
+                <div class="slider-track-bg"></div>
+                <div class="slider-track" id="sliderTrack"></div>
+                <input type="range" id="yearMinSlider" min="2000" max="2026" value="2000" class="range-input range-min">
+                <input type="range" id="yearMaxSlider" min="2000" max="2026" value="2026" class="range-input range-max">
+            </div>
         </div>
     </section>
 

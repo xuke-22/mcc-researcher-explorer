@@ -14,6 +14,7 @@ document.addEventListener("DOMContentLoaded", () => {
     loadStats();
     initEnterKey();
     loadMccNames();
+    initYearSlider();
 });
 
 async function loadMccNames() {
@@ -43,6 +44,7 @@ function initTabs() {
 function initEnterKey() {
     bindEnter("researcherInput", searchResearcher);
     bindEnter("keywordInput", searchKeyword);
+    bindEnter("keywordResearcherInput", searchKeyword);
     bindEnter("fundingKeywordInput", searchFundingKeyword);
 }
 function bindEnter(id, fn) {
@@ -51,6 +53,42 @@ function bindEnter(id, fn) {
     el.addEventListener("keypress", (e) => {
         if (e.key === "Enter") fn();
     });
+}
+
+// ─── Year Slider ────────────────────────────────────────
+function initYearSlider() {
+    const minSlider = $("yearMinSlider");
+    const maxSlider = $("yearMaxSlider");
+    const minLabel = $("yearMinLabel");
+    const maxLabel = $("yearMaxLabel");
+    const track = $("sliderTrack");
+    if (!minSlider || !maxSlider) return;
+
+    function update() {
+        let minVal = parseInt(minSlider.value);
+        let maxVal = parseInt(maxSlider.value);
+        if (minVal > maxVal) {
+            minSlider.value = maxVal;
+            minVal = maxVal;
+        }
+        if (maxVal < minVal) {
+            maxSlider.value = minVal;
+            maxVal = minVal;
+        }
+        minLabel.textContent = minVal;
+        maxLabel.textContent = maxVal;
+        const rangeMin = parseInt(minSlider.min);
+        const rangeMax = parseInt(minSlider.max);
+        const span = rangeMax - rangeMin;
+        const leftPct = ((minVal - rangeMin) / span) * 100;
+        const rightPct = ((maxVal - rangeMin) / span) * 100;
+        track.style.left = leftPct + "%";
+        track.style.width = (rightPct - leftPct) + "%";
+    }
+
+    minSlider.addEventListener("input", update);
+    maxSlider.addEventListener("input", update);
+    update();
 }
 
 // ─── Stats ────────────────────────────────────────────
@@ -105,24 +143,28 @@ async function searchResearcher() {
     }
 }
 
-// ─── Search: keyword (independent of researcher) ────────
+// ─── Search: keyword (with optional researcher filter) ──
 async function searchKeyword() {
     const q = $("keywordInput").value.trim();
     if (!q) { showError("Please enter a keyword."); return; }
 
-    const yearStart = $("yearStart") ? $("yearStart").value : "";
-    const yearEnd = $("yearEnd") ? $("yearEnd").value : "";
+    const researcherFilter = $("keywordResearcherInput") ? $("keywordResearcherInput").value.trim() : "";
+    const minSlider = $("yearMinSlider");
+    const maxSlider = $("yearMaxSlider");
+    const yearStart = minSlider ? minSlider.value : "";
+    const yearEnd = maxSlider ? maxSlider.value : "";
 
     let url = `/search?q=${encodeURIComponent(q)}`;
-    if (yearStart) url += `&year_start=${encodeURIComponent(yearStart)}`;
-    if (yearEnd) url += `&year_end=${encodeURIComponent(yearEnd)}`;
+    if (yearStart && yearStart !== minSlider.min) url += `&year_start=${encodeURIComponent(yearStart)}`;
+    if (yearEnd && yearEnd !== maxSlider.max) url += `&year_end=${encodeURIComponent(yearEnd)}`;
+    if (researcherFilter) url += `&researcher=${encodeURIComponent(researcherFilter)}`;
 
     showLoading();
     try {
         const r = await fetch(url);
         const data = await r.json();
         hideLoading();
-        renderKeywordResults(data, q);
+        renderKeywordResults(data, q, researcherFilter);
     } catch (e) {
         showError("Network error: " + e.message);
     }
@@ -197,15 +239,21 @@ function renderFundingKeywordResults(data) {
     resultsEl().innerHTML = html;
 }
 
-function renderKeywordResults(data, q) {
+function renderKeywordResults(data, q, researcherFilter) {
     if (!data || data.length === 0) {
+        const filterNote = researcherFilter
+            ? ` for researcher "${escapeHtml(researcherFilter)}"`
+            : "";
         resultsEl().innerHTML = renderEmpty("No publications match",
-            `No cached publications mention "${escapeHtml(q)}". Try a researcher search instead.`);
+            `No cached publications mention "${escapeHtml(q)}"${filterNote}. Try a researcher search first to cache their publications.`);
         return;
     }
     let html = `<div class="section-block">`;
     html += `<h2 class="section-title">Keyword Results</h2>`;
-    html += `<div class="section-meta">${data.length} match${data.length === 1 ? "" : "es"} for "<strong>${escapeHtml(q)}</strong>"</div>`;
+    const filterLabel = researcherFilter
+        ? ` · filtered by "<strong>${escapeHtml(researcherFilter)}</strong>"`
+        : " · all MCC researchers";
+    html += `<div class="section-meta">${data.length} match${data.length === 1 ? "" : "es"} for "<strong>${escapeHtml(q)}</strong>"${filterLabel}</div>`;
     html += data.map(renderPublicationCard).join("");
     html += `</div>`;
     resultsEl().innerHTML = html;
