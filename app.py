@@ -302,20 +302,39 @@ def pubmed_search_by_name(name: str, retmax: int = 30):
     return _parse_pubmed_xml(r2.text)
 
 
+def _add_wildcards(text: str) -> str:
+    """Append PubMed truncation wildcard to short/partial terms."""
+    words = text.strip().split()
+    out = []
+    for w in words:
+        if w.endswith("*") or w.endswith("]") or w.upper() in ("AND", "OR", "NOT"):
+            out.append(w)
+        elif len(w) >= 3 and not w[-1].isdigit():
+            out.append(w + "*")
+        else:
+            out.append(w)
+    return " ".join(out)
+
+
 def pubmed_search_by_keyword(keyword: str, researcher: str = "",
                              year_start: str = "", year_end: str = "",
                              retmax: int = 50):
     """Live PubMed keyword search scoped to Meyer Cancer Center / Weill Cornell."""
     affil = '("Meyer Cancer Center"[Affiliation] OR "Weill Cornell"[Affiliation])'
-    term = f"({keyword}) AND {affil}"
+
+    kw_exact = keyword.strip()
+    kw_fuzzy = _add_wildcards(kw_exact)
+    term = f"({kw_exact} OR {kw_fuzzy}) AND {affil}"
 
     if researcher:
-        if "," in researcher:
-            last, first = [s.strip() for s in researcher.split(",", 1)]
+        member = find_member_by_name(researcher)
+        rname = member["name"] if member else researcher
+        if "," in rname:
+            last, first = [s.strip() for s in rname.split(",", 1)]
             first = first.split()[0] if first else ""
             term += f' AND {last} {first}[Author]'
         else:
-            term += f" AND {researcher}[Author]"
+            term += f" AND {rname}[Author]"
 
     if year_start or year_end:
         mindate = year_start or "2000"
@@ -551,10 +570,17 @@ def api_mcc_names():
         names.append(raw)
         if "," in raw:
             last, first = [s.strip() for s in raw.split(",", 1)]
-            first_short = first.split()[0] if first else ""
+            first_parts = first.split()
+            first_short = first_parts[0] if first_parts else ""
             if first_short:
                 names.append(f"{first_short} {last}")
                 names.append(f"{first} {last}")
+            # Add hyphenated last-name parts as separate entries
+            if "-" in last:
+                for part in last.split("-"):
+                    part = part.strip()
+                    if part and first_short:
+                        names.append(f"{first_short} {part}")
     return jsonify(sorted(set(names)))
 
 
@@ -782,9 +808,9 @@ def search_funding_keyword():
         "criteria": {
             "pi_profile_ids": pi_ids,
             "advanced_text_search": {
-                "operator": "and",
+                "operator": "or",
                 "search_field": "projecttitle,terms,abstracttext",
-                "search_text": q,
+                "search_text": f"{q} {_add_wildcards(q)}",
             },
         },
         "include_fields": [

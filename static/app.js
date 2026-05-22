@@ -399,7 +399,7 @@ function renderFundingCardKeyword(p) {
     `;
 }
 
-// ─── MCC author highlighting ────────────────────────────
+// ─── MCC author highlighting (fuzzy) ────────────────────
 let _mccLastNames = {};
 
 function buildMccIndex() {
@@ -422,9 +422,31 @@ function buildMccIndex() {
             }
         }
         if (!last) continue;
+        const entry = firsts;
         if (!_mccLastNames[last]) _mccLastNames[last] = [];
-        _mccLastNames[last].push(firsts);
+        _mccLastNames[last].push(entry);
+        // Index hyphenated parts too (e.g. "cubillos-ruiz" → also index "ruiz")
+        if (last.includes("-")) {
+            for (const part of last.split("-")) {
+                if (part.length >= 2) {
+                    if (!_mccLastNames[part]) _mccLastNames[part] = [];
+                    _mccLastNames[part].push(entry);
+                }
+            }
+        }
     }
+}
+
+function _matchFirstName(authorFirst, candidateFirsts) {
+    if (!candidateFirsts) return true;
+    if (!authorFirst) return false;
+    const aInit = authorFirst.charAt(0);
+    const cParts = candidateFirsts.split(/\s+/);
+    const cFirst = cParts[0];
+    const cInit = cFirst.charAt(0);
+    if (aInit === cInit) return true;
+    if (authorFirst.startsWith(cFirst) || cFirst.startsWith(authorFirst)) return true;
+    return false;
 }
 
 function isMccAuthor(authorStr) {
@@ -433,20 +455,28 @@ function isMccAuthor(authorStr) {
     const parts = author.split(/\s+/);
     if (parts.length < 2) return false;
 
-    // Try last name as the last token
-    const lastName = parts[parts.length - 1];
-    const firstParts = parts.slice(0, -1).join(" ");
+    const firstPart = parts[0];
 
-    const candidates = _mccLastNames[lastName];
-    if (!candidates) return false;
-
-    const firstInitial = firstParts.charAt(0);
-    for (const cFirsts of candidates) {
-        if (!cFirsts) return true;
-        const cFirst = cFirsts.split(/\s+/)[0];
-        const cInitial = cFirst.charAt(0);
-        if (firstInitial === cInitial) return true;
-        if (firstParts.startsWith(cFirst) || cFirst.startsWith(firstParts.split(/\s+/)[0])) return true;
+    // Try last name as last token, last two tokens (compound), with/without hyphens
+    for (let n = 1; n <= Math.min(3, parts.length - 1); n++) {
+        const lastName = parts.slice(parts.length - n).join(" ");
+        const firstParts = parts.slice(0, parts.length - n).join(" ");
+        const candidates = _mccLastNames[lastName];
+        if (candidates) {
+            for (const cFirsts of candidates) {
+                if (_matchFirstName(firstParts.split(/\s+/)[0], cFirsts)) return true;
+            }
+        }
+        // Also try hyphenated version for compound names ("de stanchina" → "de-stanchina" not likely, but "cubillos ruiz" → "cubillos-ruiz")
+        if (n > 1) {
+            const hyphenated = parts.slice(parts.length - n).join("-");
+            const hCandidates = _mccLastNames[hyphenated];
+            if (hCandidates) {
+                for (const cFirsts of hCandidates) {
+                    if (_matchFirstName(firstParts.split(/\s+/)[0], cFirsts)) return true;
+                }
+            }
+        }
     }
     return false;
 }
