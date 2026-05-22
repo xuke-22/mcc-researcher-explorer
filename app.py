@@ -190,6 +190,94 @@ def load_members():
     return members
 
 
+# ─── MCC author matching (server-side, mirrors frontend logic) ────
+_MCC_LAST_NAME_IDX = None
+
+
+def _build_mcc_name_index():
+    """Build a last-name → [first-name-parts] index for author matching."""
+    global _MCC_LAST_NAME_IDX
+    if _MCC_LAST_NAME_IDX is not None:
+        return _MCC_LAST_NAME_IDX
+
+    idx = {}
+    for m in load_members():
+        raw = m["name"].lower().strip()
+        if "," in raw:
+            last, firsts = raw.split(",", 1)
+            last = last.strip()
+            firsts = firsts.strip()
+        else:
+            parts = raw.split()
+            if len(parts) >= 2:
+                last = parts[-1]
+                firsts = " ".join(parts[:-1])
+            else:
+                last = raw
+                firsts = ""
+        if not last:
+            continue
+        idx.setdefault(last, []).append(firsts)
+        if "-" in last:
+            for part in last.split("-"):
+                if len(part) >= 2:
+                    idx.setdefault(part, []).append(firsts)
+
+    _MCC_LAST_NAME_IDX = idx
+    return idx
+
+
+def _is_mcc_author(author_str: str) -> bool:
+    """Check if an author name matches any MCC member (fuzzy)."""
+    idx = _build_mcc_name_index()
+    author = author_str.lower().strip()
+    parts = author.split()
+    if len(parts) < 2:
+        return False
+
+    for n in range(1, min(4, len(parts))):
+        last = " ".join(parts[len(parts) - n:])
+        first_parts = parts[:len(parts) - n]
+        first = first_parts[0] if first_parts else ""
+
+        candidates = idx.get(last)
+        if candidates:
+            for c_firsts in candidates:
+                if not c_firsts:
+                    return True
+                if not first:
+                    continue
+                c_first = c_firsts.split()[0]
+                if first[0] == c_first[0]:
+                    return True
+                if first.startswith(c_first) or c_first.startswith(first):
+                    return True
+
+        if n > 1:
+            hyphenated = "-".join(parts[len(parts) - n:])
+            candidates = idx.get(hyphenated)
+            if candidates:
+                for c_firsts in candidates:
+                    if not c_firsts or not first:
+                        return True
+                    c_first = c_firsts.split()[0]
+                    if first[0] == c_first[0]:
+                        return True
+    return False
+
+
+def _pub_has_mcc_author(pub: dict) -> bool:
+    """Return True if at least one author in the publication is an MCC member."""
+    authors_str = pub.get("authors", "")
+    if not authors_str:
+        return False
+    for author in authors_str.split(";"):
+        author = author.strip()
+        if author and _is_mcc_author(author):
+            return True
+    return False
+
+
 def find_member_by_name(query: str):
     """Case-insensitive partial name match. Returns first match or None."""
     results = find_members_fuzzy(query, limit=1)
@@ -302,8 +390,33 @@ def pubmed_search_by_name(name: str, retmax: int = 30):
     return _parse_pubmed_xml(r2.text)
 
 
-def _add_wildcards(text: str) -> str:
-    """Append PubMed truncation wildcard to short/partial terms."""
+_NIH_SUFFIXES = [
+    "", "s", "er", "ers", "ing", "ed", "tion", "sion", "ment", "ive",
+    "al", "ic", "ics", "ous", "ary", "ance", "ence", "ity", "ies",
+    "ogy", "oma", "omas", "emia", "itis", "osis", "ases",
+    "therapy", "ology", "ological",
+]
+
+
+def _expand_query_for_nih(text: str) -> str:
+    """Expand partial terms for NIH Reporter by adding common suffixes.
+
+    NIH Reporter wildcards don't work with pi_profile_ids, so we generate
+    plausible completions and use the 'or' operator. Non-matching expansions
+    are harmless.
+    """
+    words = text.strip().split()
+    expanded = set()
+    for w in words:
+        expanded.add(w)
+        if len(w) >= 3 and not w[-1].isdigit() and w.upper() not in ("AND", "OR", "NOT"):
+            for suf in _NIH_SUFFIXES:
+                expanded.add(w + suf)
+    return " ".join(expanded)
+
+
+def _add_wildcards(text: str, join_op: str = " ") -> str:
+    """Append truncation wildcard (*) to terms ≥3 chars."""
     words = text.strip().split()
     out = []
     for w in words:
@@ -313,7 +426,7 @@ def _add_wildcards(text: str) -> str:
             out.append(w + "*")
         else:
             out.append(w)
-    return " ".join(out)
+    return join_op.join(out)
 
 
 def pubmed_search_by_keyword(keyword: str, researcher: str = "",
@@ -599,13 +712,16 @@ def search_keyword():
         pubs, total = pubmed_search_by_keyword(
             q, researcher=researcher,
             year_start=year_start, year_end=year_end,
-            retmax=50,
+            retmax=100,
         )
     except Exception as e:
         return jsonify({"error": f"PubMed search failed: {e}",
                         "publications": [], "total": 0})
 
-    return jsonify({"publications": pubs, "total": total})
+    # Keep only publications with at least one MCC member as author
+    pubs = [p for p in pubs if _pub_has_mcc_author(p)]
+
+    return jsonify({"publications": pubs[:50], "total": total})
 
 
 @app.route("/search_name")
@@ -810,7 +926,7 @@ def search_funding_keyword():
             "advanced_text_search": {
                 "operator": "or",
                 "search_field": "projecttitle,terms,abstracttext",
-                "search_text": f"{q} {_add_wildcards(q)}",
+                "search_text": _expand_query_for_nih(q),
             },
         },
         "include_fields": [
