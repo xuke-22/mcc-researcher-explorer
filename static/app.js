@@ -143,7 +143,7 @@ async function searchResearcher() {
     }
 }
 
-// ─── Search: keyword (with optional researcher filter) ──
+// ─── Search: keyword (live PubMed, with optional researcher filter) ──
 async function searchKeyword() {
     const q = $("keywordInput").value.trim();
     if (!q) { showError("Please enter a keyword."); return; }
@@ -164,7 +164,8 @@ async function searchKeyword() {
         const r = await fetch(url);
         const data = await r.json();
         hideLoading();
-        renderKeywordResults(data, q, researcherFilter);
+        if (data.error) { showError(data.error); return; }
+        renderKeywordResults(data.publications || [], q, researcherFilter, data.total || 0);
     } catch (e) {
         showError("Network error: " + e.message);
     }
@@ -239,21 +240,24 @@ function renderFundingKeywordResults(data) {
     resultsEl().innerHTML = html;
 }
 
-function renderKeywordResults(data, q, researcherFilter) {
+function renderKeywordResults(data, q, researcherFilter, total) {
     if (!data || data.length === 0) {
         const filterNote = researcherFilter
             ? ` for researcher "${escapeHtml(researcherFilter)}"`
             : "";
         resultsEl().innerHTML = renderEmpty("No publications match",
-            `No cached publications mention "${escapeHtml(q)}"${filterNote}. Try a researcher search first to cache their publications.`);
+            `No MCC-affiliated publications found for "${escapeHtml(q)}"${filterNote}.`);
         return;
     }
     let html = `<div class="section-block">`;
     html += `<h2 class="section-title">Keyword Results</h2>`;
     const filterLabel = researcherFilter
         ? ` · filtered by "<strong>${escapeHtml(researcherFilter)}</strong>"`
-        : " · all MCC researchers";
-    html += `<div class="section-meta">${data.length} match${data.length === 1 ? "" : "es"} for "<strong>${escapeHtml(q)}</strong>"${filterLabel}</div>`;
+        : "";
+    const totalLabel = total > data.length
+        ? `Showing ${data.length} of ${total.toLocaleString()} MCC publications`
+        : `${data.length} MCC publication${data.length === 1 ? "" : "s"}`;
+    html += `<div class="section-meta">${totalLabel} matching "<strong>${escapeHtml(q)}</strong>"${filterLabel} · source: <strong>live PubMed</strong></div>`;
     html += data.map(renderPublicationCard).join("");
     html += `</div>`;
     resultsEl().innerHTML = html;

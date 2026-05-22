@@ -276,6 +276,45 @@ def pubmed_search_by_name(name: str, retmax: int = 30):
     return _parse_pubmed_xml(r2.text)
 
 
+def pubmed_search_by_keyword(keyword: str, researcher: str = "",
+                             year_start: str = "", year_end: str = "",
+                             retmax: int = 50):
+    """Live PubMed keyword search scoped to Meyer Cancer Center / Weill Cornell."""
+    affil = '("Meyer Cancer Center"[Affiliation] OR "Weill Cornell"[Affiliation])'
+    term = f"({keyword}) AND {affil}"
+
+    if researcher:
+        if "," in researcher:
+            last, first = [s.strip() for s in researcher.split(",", 1)]
+            first = first.split()[0] if first else ""
+            term += f' AND {last} {first}[Author]'
+        else:
+            term += f" AND {researcher}[Author]"
+
+    if year_start or year_end:
+        mindate = year_start or "2000"
+        maxdate = year_end or "2026"
+        term += f" AND {mindate}[PDAT]:{maxdate}[PDAT]"
+
+    esearch = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
+    params = {"db": "pubmed", "term": term, "retmax": retmax, "retmode": "json",
+              "sort": "date"}
+    r = requests.get(esearch, params=params, timeout=30)
+    r.raise_for_status()
+    data = r.json().get("esearchresult", {})
+    pmids = data.get("idlist", [])
+    total = int(data.get("count", 0))
+
+    if not pmids:
+        return [], total
+
+    efetch = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi"
+    r2 = requests.get(efetch, params={"db": "pubmed", "id": ",".join(pmids),
+                                       "retmode": "xml"}, timeout=60)
+    r2.raise_for_status()
+    return _parse_pubmed_xml(r2.text), total
+
+
 _MONTHS = {
     "Jan": "01", "Feb": "02", "Mar": "03", "Apr": "04",
     "May": "05", "Jun": "06", "Jul": "07", "Aug": "08",
@@ -494,44 +533,26 @@ def api_mcc_names():
 
 @app.route("/search")
 def search_keyword():
-    """Keyword search across cached publications with optional year range and researcher filter."""
+    """Live PubMed keyword search scoped to MCC/Weill Cornell affiliations."""
     q = request.args.get("q", "").strip()
     if not q:
-        return jsonify([])
+        return jsonify({"publications": [], "total": 0})
 
     year_start = request.args.get("year_start", "").strip()
     year_end = request.args.get("year_end", "").strip()
     researcher = request.args.get("researcher", "").strip()
 
-    sql = """
-        SELECT pmid, title, abstract, authors, journal, pub_date, doi, orcid
-        FROM publication
-        WHERE (title LIKE ? OR abstract LIKE ?)
-    """
-    params = [f"%{q}%", f"%{q}%"]
+    try:
+        pubs, total = pubmed_search_by_keyword(
+            q, researcher=researcher,
+            year_start=year_start, year_end=year_end,
+            retmax=50,
+        )
+    except Exception as e:
+        return jsonify({"error": f"PubMed search failed: {e}",
+                        "publications": [], "total": 0})
 
-    if year_start:
-        sql += " AND pub_date >= ?"
-        params.append(year_start)
-    if year_end:
-        sql += " AND pub_date <= ?"
-        params.append(f"{year_end}-12-31")
-
-    if researcher:
-        member = find_member_by_name(researcher)
-        if member and member["orcid"]:
-            sql += " AND orcid = ?"
-            params.append(member["orcid"])
-        else:
-            sql += " AND authors LIKE ?"
-            params.append(f"%{researcher}%")
-
-    sql += " ORDER BY pub_date DESC LIMIT 100"
-
-    conn = get_db()
-    rows = conn.execute(sql, params).fetchall()
-    conn.close()
-    return jsonify([dict(r) for r in rows])
+    return jsonify({"publications": pubs, "total": total})
 
 
 @app.route("/search_name")
