@@ -357,19 +357,66 @@ function renderFundingCardKeyword(p) {
 }
 
 // ─── MCC author highlighting ────────────────────────────
+// _mccNames contains entries like "ARTIS, DAVID", "David Artis", etc.
+// We build a set of last names for fast lookup, then verify with first-name initial.
+let _mccLastNames = {};
+
+function buildMccIndex() {
+    if (Object.keys(_mccLastNames).length || !_mccNames.length) return;
+    for (const name of _mccNames) {
+        const lower = name.toLowerCase().trim();
+        let last = "";
+        let firsts = "";
+        if (lower.includes(",")) {
+            const parts = lower.split(",", 2);
+            last = parts[0].trim();
+            firsts = parts[1].trim();
+        } else {
+            const parts = lower.split(/\s+/);
+            if (parts.length >= 2) {
+                last = parts[parts.length - 1];
+                firsts = parts.slice(0, -1).join(" ");
+            } else {
+                last = lower;
+            }
+        }
+        if (!last) continue;
+        if (!_mccLastNames[last]) _mccLastNames[last] = [];
+        _mccLastNames[last].push(firsts);
+    }
+}
+
+function isMccAuthor(authorStr) {
+    buildMccIndex();
+    const author = authorStr.toLowerCase().trim();
+    // author format is typically "Emily S Tonorezos" or "David Artis"
+    const parts = author.split(/\s+/);
+    if (parts.length < 2) return false;
+
+    const lastName = parts[parts.length - 1];
+    const firstParts = parts.slice(0, -1).join(" ");
+    const firstInitial = firstParts.charAt(0);
+
+    const candidates = _mccLastNames[lastName];
+    if (!candidates) return false;
+
+    for (const cFirsts of candidates) {
+        if (!cFirsts) return true;
+        const cFirst = cFirsts.split(/\s+/)[0];
+        const cInitial = cFirst.charAt(0);
+        // Match if first initial matches, or first name starts with candidate (or vice versa)
+        if (firstInitial === cInitial) return true;
+        if (firstParts.startsWith(cFirst) || cFirst.startsWith(firstParts.split(/\s+/)[0])) return true;
+    }
+    return false;
+}
+
 function highlightMccAuthors(authorsStr) {
     if (!_mccNames.length) return escapeHtml(authorsStr);
 
     const authors = authorsStr.split(";").map(a => a.trim()).filter(Boolean);
     return authors.map(author => {
-        const authorLower = author.toLowerCase().trim();
-        const isMcc = _mccNames.some(name => {
-            const nameLower = name.toLowerCase();
-            return authorLower === nameLower
-                || authorLower.includes(nameLower)
-                || nameLower.includes(authorLower);
-        });
-        if (isMcc) {
+        if (isMccAuthor(author)) {
             return `<span class="mcc-author">${escapeHtml(author)}</span>`;
         }
         return escapeHtml(author);
@@ -378,12 +425,15 @@ function highlightMccAuthors(authorsStr) {
 
 // ─── Program badge color mapping ────────────────────────
 function programBadgeClass(program) {
-    if (program.includes("Biology")) return "badge-program-cb";
-    if (program.includes("Genetics")) return "badge-program-cge";
-    if (program.includes("Prevention") || program.includes("Control")) return "badge-program-cpc";
-    if (program.includes("Therapeutics")) return "badge-program-ct";
-    if (program.includes("Immunology")) return "badge-program-im";
-    return "badge-program-default";
+    switch (program) {
+        case "CB":  return "badge-program-cb";
+        case "CGE": return "badge-program-cge";
+        case "CPC": return "badge-program-cpc";
+        case "CT":  return "badge-program-ct";
+        case "ZY":  return "badge-program-zy";
+        case "MCC": return "badge-program-default";
+        default:    return "badge-program-default";
+    }
 }
 
 // ─── Helpers ─────────────────────────────────

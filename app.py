@@ -60,20 +60,11 @@ app = Flask(__name__, static_folder="static", template_folder="templates")
 _MEMBERS_CACHE = None
 
 PROGRAM_MAP = {
-    "Meyer Cancer Center: CB": "Cancer Biology",
-    "Meyer Cancer Center: CGE": "Cancer Genetics & Epigenetics",
-    "Meyer Cancer Center: CPC": "Cancer Prevention & Control",
-    "Meyer Cancer Center: CT": "Cancer Therapeutics",
-    "Meyer Cancer Center: ZY": "Immunology & Microbiology",
-    "Meyer Cancer Center": "Meyer Cancer Center",
-}
-
-PROGRAM_SHORT = {
-    "Cancer Biology": "CB",
-    "Cancer Genetics & Epigenetics": "CGE",
-    "Cancer Prevention & Control": "CPC",
-    "Cancer Therapeutics": "CT",
-    "Immunology & Microbiology": "IM",
+    "Meyer Cancer Center: CB": "CB",
+    "Meyer Cancer Center: CGE": "CGE",
+    "Meyer Cancer Center: CPC": "CPC",
+    "Meyer Cancer Center: CT": "CT",
+    "Meyer Cancer Center: ZY": "ZY",
     "Meyer Cancer Center": "MCC",
 }
 

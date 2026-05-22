@@ -503,7 +503,7 @@ main.container {
 .badge-program-cge     { background: #7c3aed; color: var(--white); }
 .badge-program-cpc     { background: #059669; color: var(--white); }
 .badge-program-ct      { background: #d97706; color: var(--white); }
-.badge-program-im      { background: #0891b2; color: var(--white); }
+.badge-program-zy      { background: #0891b2; color: var(--white); }
 .badge-program-default { background: var(--neutral-40); color: var(--white); }
 
 /* VIVO profile name link */
