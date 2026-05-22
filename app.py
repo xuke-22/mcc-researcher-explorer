@@ -192,39 +192,65 @@ def load_members():
 
 def find_member_by_name(query: str):
     """Case-insensitive partial name match. Returns first match or None."""
-    if not query:
-        return None
-    q = query.strip().lower()
-    members = load_members()
-
-    # Exact match first
-    for m in members:
-        if m["name"].lower() == q:
-            return m
-
-    # Then partial match
-    for m in members:
-        if q in m["name"].lower():
-            return m
-
-    # Try matching last-name only
-    for m in members:
-        parts = m["name"].split(",")
-        last = parts[0].strip().lower() if parts else ""
-        if last == q or q in last:
-            return m
-
-    return None
+    results = find_members_fuzzy(query, limit=1)
+    return results[0]["member"] if results else None
 
 
-def find_members_by_query(query: str, limit: int = 20):
-    """Return all members matching the query."""
+def find_members_fuzzy(query: str, limit: int = 20):
+    """Return all members matching the query with match-type labels.
+
+    Returns list of {"member": {...}, "match_type": "exact"|"partial"|"fuzzy"}.
+    """
     if not query:
         return []
     q = query.strip().lower()
     members = load_members()
-    matches = [m for m in members if q in m["name"].lower()]
-    return matches[:limit]
+    seen = set()
+    results = []
+
+    def _add(m, mtype):
+        key = m["name"].lower()
+        if key not in seen:
+            seen.add(key)
+            results.append({"member": m, "match_type": mtype})
+
+    # Exact match
+    for m in members:
+        if m["name"].lower() == q:
+            _add(m, "exact")
+
+    # Partial / substring match
+    for m in members:
+        if q in m["name"].lower():
+            _add(m, "partial")
+
+    # Fuzzy: last-name match, first-initial match, or query is a prefix
+    q_parts = q.split(",") if "," in q else q.split()
+    q_last = q_parts[0].strip() if q_parts else q
+    q_first = q_parts[1].strip().split()[0] if len(q_parts) > 1 and q_parts[1].strip() else ""
+
+    for m in members:
+        name_lower = m["name"].lower()
+        parts = name_lower.split(",")
+        m_last = parts[0].strip() if parts else ""
+        m_first = parts[1].strip().split()[0] if len(parts) > 1 and parts[1].strip() else ""
+
+        # Last name contains query or query contains last name
+        if q_last and (q_last in m_last or m_last.startswith(q_last)):
+            if q_first:
+                if m_first and (m_first.startswith(q_first) or q_first.startswith(m_first)
+                                or m_first[0] == q_first[0]):
+                    _add(m, "fuzzy")
+            else:
+                _add(m, "fuzzy")
+
+    return results[:limit]
+
+
+def find_members_by_query(query: str, limit: int = 20):
+    """Return all members matching the query (for autocomplete API)."""
+    results = find_members_fuzzy(query, limit=limit)
+    return [r["member"] for r in results]
 
 
 def find_member_by_pi_id(pi_id):
@@ -362,7 +388,8 @@ def _parse_pubmed_xml(xml_text: str):
     out = []
     for art in root.findall(".//PubmedArticle"):
         pmid = art.findtext(".//PMID", default="")
-        title = "".join((art.find(".//ArticleTitle") or ET.Element("x")).itertext())
+        title_el = art.find(".//ArticleTitle")
+        title = "".join(title_el.itertext()) if title_el is not None else ""
         abstract_parts = art.findall(".//Abstract/AbstractText")
         abstract = " ".join("".join(a.itertext()) for a in abstract_parts)
         journal = art.findtext(".//Journal/Title", default="")
@@ -666,21 +693,41 @@ def search_funding():
 
 @app.route("/researcher")
 def researcher_combined():
-    """Combined view: publications + NIH funding for one member."""
+    """Combined view: publications + NIH funding for one or more matching members."""
     name = request.args.get("name", "").strip()
     if not name:
         return jsonify({"error": "Please provide a name."})
 
-    member = find_member_by_name(name)
-    if not member:
+    matches = find_members_fuzzy(name, limit=10)
+    if not matches:
         return jsonify({"error": f"No MCC member found matching '{name}'."})
 
+    # If only one match, return the detailed profile directly
+    # If multiple, return a list of candidates and load the first one's detail
+    results = []
+    for match_info in matches:
+        member = match_info["member"]
+        match_type = match_info["match_type"]
+        entry = {
+            "name": member["name"],
+            "orcid": member["orcid"],
+            "pi_id": member["pi_id"],
+            "program": member.get("program", ""),
+            "vivo_url": member.get("vivo_url", ""),
+            "match_type": match_type,
+        }
+        results.append(entry)
+
+    # Load full detail for the first (best) match
+    member = matches[0]["member"]
     response = {
         "name": member["name"],
         "orcid": member["orcid"],
         "pi_id": member["pi_id"],
         "program": member.get("program", ""),
         "vivo_url": member.get("vivo_url", ""),
+        "match_type": matches[0]["match_type"],
+        "all_matches": results,
         "publications": [],
         "publication_count": 0,
         "publication_source": "none",

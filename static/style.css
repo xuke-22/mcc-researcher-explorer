@@ -802,6 +802,57 @@ a.result-card-link:hover .pub-title-link { color: var(--wcm-red); }
     font-weight: 600;
 }
 
+/* ─── MATCH LIST (fuzzy search results) ─────────────── */
+.match-list {
+    margin: 24px 0;
+    background: var(--white);
+    border: 1px solid var(--neutral-20);
+    border-radius: 10px;
+    overflow: hidden;
+}
+.match-list-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--neutral-60);
+    padding: 14px 20px 8px;
+    border-bottom: 1px solid var(--neutral-10);
+}
+.match-list-items {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+.match-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 20px;
+    cursor: pointer;
+    transition: background 0.15s;
+    border-bottom: 1px solid var(--neutral-10);
+}
+.match-item:last-child { border-bottom: none; }
+.match-item:hover,
+.match-item-active {
+    background: #fdf2f2;
+}
+.match-item-name {
+    font-weight: 500;
+    color: var(--black);
+}
+.match-type-badge {
+    display: inline-block;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+.match-type-exact   { background: #dcfce7; color: #166534; }
+.match-type-partial { background: #fef9c3; color: #854d0e; }
+.match-type-fuzzy   { background: #dbeafe; color: #1e40af; }
+
 /* ─── FOOTER ─────────────────────────────────────────── */
 .site-footer {
     background: var(--black);

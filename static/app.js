@@ -55,7 +55,9 @@ function bindEnter(id, fn) {
     });
 }
 
-// ─── Year Slider ────────────────────────────────────────
+// ─── Year Slider (auto-searches on change) ──────────────
+let _sliderDebounce = null;
+
 function initYearSlider() {
     const minSlider = $("yearMinSlider");
     const maxSlider = $("yearMaxSlider");
@@ -64,7 +66,7 @@ function initYearSlider() {
     const track = $("sliderTrack");
     if (!minSlider || !maxSlider) return;
 
-    function update() {
+    function update(autoSearch) {
         let minVal = parseInt(minSlider.value);
         let maxVal = parseInt(maxSlider.value);
         if (minVal > maxVal) {
@@ -84,11 +86,16 @@ function initYearSlider() {
         const rightPct = ((maxVal - rangeMin) / span) * 100;
         track.style.left = leftPct + "%";
         track.style.width = (rightPct - leftPct) + "%";
+
+        if (autoSearch && $("keywordInput").value.trim()) {
+            clearTimeout(_sliderDebounce);
+            _sliderDebounce = setTimeout(searchKeyword, 400);
+        }
     }
 
-    minSlider.addEventListener("input", update);
-    maxSlider.addEventListener("input", update);
-    update();
+    minSlider.addEventListener("input", () => update(true));
+    maxSlider.addEventListener("input", () => update(true));
+    update(false);
 }
 
 // ─── Stats ────────────────────────────────────────────
@@ -143,6 +150,12 @@ async function searchResearcher() {
     }
 }
 
+// Click handler for match list items
+function loadResearcherByName(name) {
+    $("researcherInput").value = name;
+    searchResearcher();
+}
+
 // ─── Search: keyword (live PubMed, with optional researcher filter) ──
 async function searchKeyword() {
     const q = $("keywordInput").value.trim();
@@ -194,7 +207,28 @@ async function searchFundingKeyword() {
 // ════════════════════════════════════════════════════════════
 
 function renderResearcher(d) {
-    let html = renderProfileHeader(d);
+    let html = "";
+
+    // Show all matches if there are multiple
+    if (d.all_matches && d.all_matches.length > 1) {
+        html += `<div class="match-list">`;
+        html += `<div class="match-list-title">${d.all_matches.length} matching members found</div>`;
+        html += `<div class="match-list-items">`;
+        d.all_matches.forEach(m => {
+            const active = m.name === d.name ? " match-item-active" : "";
+            const typeLabel = m.match_type === "exact" ? "Exact match"
+                : m.match_type === "partial" ? "Partial match" : "Fuzzy match";
+            const typeClass = "match-type-" + m.match_type;
+            html += `<button class="match-item${active}" onclick="loadResearcherByName('${escapeHtml(m.name).replace(/'/g, "\\'")}')">`;
+            html += `<span class="match-item-name">${escapeHtml(m.name)}</span>`;
+            html += `<span class="match-type-badge ${typeClass}">${typeLabel}</span>`;
+            if (m.program) html += `<span class="badge ${programBadgeClass(m.program)}" style="font-size:10px;margin-left:4px;">${escapeHtml(m.program)}</span>`;
+            html += `</button>`;
+        });
+        html += `</div></div>`;
+    }
+
+    html += renderProfileHeader(d);
 
     // Publications
     html += `<div class="section-block">`;
@@ -208,7 +242,7 @@ function renderResearcher(d) {
     }
     html += `</div>`;
 
-    // Funding — show project list without dollar amounts
+    // Funding
     html += `<div class="section-block">`;
     html += `<h2 class="section-title">NIH Funding</h2>`;
     if (d.funding) {
@@ -266,6 +300,11 @@ function renderKeywordResults(data, q, researcherFilter, total) {
 // ─── Profile header ────────────────────────────────────
 function renderProfileHeader(d) {
     let badges = "";
+    if (d.match_type && d.match_type !== "exact") {
+        const mtLabel = d.match_type === "partial" ? "Partial match" : "Fuzzy match";
+        const mtClass = "match-type-" + d.match_type;
+        badges += `<span class="match-type-badge ${mtClass}" style="margin-left:0;margin-right:6px;">${mtLabel}</span>`;
+    }
     if (d.pi_id) {
         badges += `<span class="badge badge-amber">NIH Funded</span>`;
     }
@@ -361,8 +400,6 @@ function renderFundingCardKeyword(p) {
 }
 
 // ─── MCC author highlighting ────────────────────────────
-// _mccNames contains entries like "ARTIS, DAVID", "David Artis", etc.
-// We build a set of last names for fast lookup, then verify with first-name initial.
 let _mccLastNames = {};
 
 function buildMccIndex() {
@@ -393,22 +430,21 @@ function buildMccIndex() {
 function isMccAuthor(authorStr) {
     buildMccIndex();
     const author = authorStr.toLowerCase().trim();
-    // author format is typically "Emily S Tonorezos" or "David Artis"
     const parts = author.split(/\s+/);
     if (parts.length < 2) return false;
 
+    // Try last name as the last token
     const lastName = parts[parts.length - 1];
     const firstParts = parts.slice(0, -1).join(" ");
-    const firstInitial = firstParts.charAt(0);
 
     const candidates = _mccLastNames[lastName];
     if (!candidates) return false;
 
+    const firstInitial = firstParts.charAt(0);
     for (const cFirsts of candidates) {
         if (!cFirsts) return true;
         const cFirst = cFirsts.split(/\s+/)[0];
         const cInitial = cFirst.charAt(0);
-        // Match if first initial matches, or first name starts with candidate (or vice versa)
         if (firstInitial === cInitial) return true;
         if (firstParts.startsWith(cFirst) || cFirst.startsWith(firstParts.split(/\s+/)[0])) return true;
     }
