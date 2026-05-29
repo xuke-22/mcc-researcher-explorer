@@ -187,47 +187,55 @@ async function searchKeyword() {
 // ─── Search: NIH funding by keyword/topic ───────────────
 async function searchFundingKeyword() {
     const q = $("fundingKeywordInput").value.trim();
-    if (!q) { showError("Please enter a topic or keyword."); return; }
+    if (!q) {
+        showError("Please enter a researcher name, topic, or keyword.");
+        return;
+    }
 
     showLoading();
+
     try {
-    // First try to search by researcher / PI name
-    let r = await fetch(`/search_funding?name=${encodeURIComponent(q)}`);
-    let data = await r.json();
+        // First try to search by researcher / PI name
+        let r = await fetch(`/search_funding?name=${encodeURIComponent(q)}`);
+        let data = await r.json();
 
-    // If no result by name, then search by funding keyword/topic
-    if (data.error || !data.projects || data.projects.length === 0) {
-        r = await fetch(`/search_funding_keyword?q=${encodeURIComponent(q)}`);
-        data = await r.json();
+        // If no result by name, then search by funding keyword/topic
+        if (data.error || !data.projects || data.projects.length === 0) {
+            r = await fetch(`/search_funding_keyword?q=${encodeURIComponent(q)}`);
+            data = await r.json();
+        }
+
+        // Normalize data so the renderer can read both name-search and keyword-search results
+        if (data.projects) {
+            data.query = data.query || q;
+            data.total_results = data.total_results ?? data.total_projects ?? data.projects.length;
+
+            data.projects = data.projects.map(p => ({
+                ...p,
+                award_amount: p.award_amount ?? 0,
+                fiscal_year: p.fiscal_year ?? "",
+                title: p.title ?? p.project_title ?? "Untitled project",
+                organization: p.organization ?? "",
+                agency: p.agency ?? "",
+                project_num: p.project_num ?? "",
+                start_date: p.start_date ?? "",
+                end_date: p.end_date ?? "",
+                pi_names: p.pi_names || data.pi_name_from_api || data.name || ""
+            }));
+        }
+
+        hideLoading();
+
+        if (data.error) {
+            showError(data.error);
+            return;
+        }
+
+        renderFundingKeywordResults(data);
+
+    } catch (e) {
+        showError("Network error: " + e.message);
     }
-}
-
-    // Normalize data so the renderer can read both name-search and keyword-search results
-    if (data.projects) {
-        data.query = data.query || q;
-        data.total_results = data.total_results ?? data.total_projects ?? data.projects.length;
-
-        data.projects = data.projects.map(p => ({
-            ...p,
-            award_amount: p.award_amount ?? 0,
-            fiscal_year: p.fiscal_year ?? "",
-            title: p.title ?? p.project_title ?? "Untitled project",
-            organization: p.organization ?? "",
-            agency: p.agency ?? "",
-            project_num: p.project_num ?? "",
-            start_date: p.start_date ?? "",
-            end_date: p.end_date ?? "",
-            pi_names: p.pi_names || data.pi_name_from_api || data.name || ""
-        }));
-    }
-
-    hideLoading();
-
-    if (data.error) { showError(data.error); return; }
-    renderFundingKeywordResults(data);
-
-} catch (e) {
-    showError("Network error: " + e.message);
 }
 
 // ════════════════════════════════════════════════════════════
