@@ -191,12 +191,20 @@ async function searchFundingKeyword() {
 
     showLoading();
     try {
-        const r = await fetch(`/search_funding_keyword?q=${encodeURIComponent(q)}`);
-        const data = await r.json();
-        hideLoading();
+    // First try to search by researcher / PI name
+    let r = await fetch(`/search_funding?name=${encodeURIComponent(q)}`);
+    let data = await r.json();
 
-        if (data.error) { showError(data.error); return; }
-        renderFundingKeywordResults(data);
+    // If no result by name, then search by funding keyword/topic
+    if (data.error || !data.projects || data.projects.length === 0) {
+        r = await fetch(`/search_funding_keyword?q=${encodeURIComponent(q)}`);
+        data = await r.json();
+    }
+
+    hideLoading();
+
+    if (data.error) { showError(data.error); return; }
+    renderFundingKeywordResults(data);
     } catch (e) {
         showError("Network error: " + e.message);
     }
