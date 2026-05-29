@@ -216,7 +216,7 @@ async function searchFundingKeyword() {
             project_num: p.project_num ?? "",
             start_date: p.start_date ?? "",
             end_date: p.end_date ?? "",
-            pi_names: p.pi_names ?? data.name ?? ""
+            pi_names: p.pi_names || data.pi_name_from_api || data.name || ""
         }));
     }
 
