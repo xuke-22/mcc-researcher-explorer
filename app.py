@@ -361,6 +361,30 @@ def get_db():
     conn.row_factory = sqlite3.Row
     return conn
 
+# ════════════════════════════════════════════════════════════════════
+# Click tracking helpers
+# ════════════════════════════════════════════════════════════════════
+CLICK_DB_PATH = os.path.join(BASE_DIR, "data", "clicks.db")
+
+
+def init_click_db():
+    """Create click tracking database if it does not exist."""
+    conn = sqlite3.connect(CLICK_DB_PATH)
+    c = conn.cursor()
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS click_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            element TEXT,
+            page TEXT,
+            timestamp TEXT,
+            user_agent TEXT
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+
+init_click_db()
 
 # ════════════════════════════════════════════════════════════════════
 # PubMed lookup helpers
@@ -623,6 +647,45 @@ def fetch_nih_funding_by_pi_id(pi_id: int, limit: int = 100):
 # ════════════════════════════════════════════════════════════════════
 # Routes
 # ════════════════════════════════════════════════════════════════════
+@app.route("/api/track-click", methods=["POST"])
+def track_click():
+    """Record a user click event."""
+    data = request.get_json() or {}
+
+    element = data.get("element", "unknown")
+    page = data.get("page", "unknown")
+    user_agent = request.headers.get("User-Agent", "")
+    timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+
+    conn = sqlite3.connect(CLICK_DB_PATH)
+    c = conn.cursor()
+    c.execute("""
+        INSERT INTO click_events (element, page, timestamp, user_agent)
+        VALUES (?, ?, ?, ?)
+    """, (element, page, timestamp, user_agent))
+    conn.commit()
+    conn.close()
+
+    return jsonify({"status": "success"})
+
+
+@app.route("/api/click-stats")
+def click_stats():
+    """Return click counts grouped by clicked element."""
+    conn = sqlite3.connect(CLICK_DB_PATH)
+    c = conn.cursor()
+    c.execute("""
+        SELECT element, COUNT(*) AS count
+        FROM click_events
+        GROUP BY element
+        ORDER BY count DESC
+    """)
+    rows = c.fetchall()
+    conn.close()
+
+    stats = [{"element": row[0], "count": row[1]} for row in rows]
+    return jsonify(stats)
+  
 @app.route("/")
 def index():
     return render_template("index.html")
