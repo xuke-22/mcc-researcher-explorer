@@ -197,14 +197,20 @@ async function searchFundingKeyword() {
 
     // If no result by name, then search by funding keyword/topic
     if (data.error || !data.projects || data.projects.length === 0) {
-        r = await fetch(`/search_funding_keyword?q=${encodeURIComponent(q)}`);
-        data = await r.json();
-    }
+    r = await fetch(`/search_funding_keyword?q=${encodeURIComponent(q)}`);
+    data = await r.json();
+}
 
-    hideLoading();
+// Normalize name-search data so the keyword renderer can read it
+if (data.projects) {
+    data.query = data.query || q;
+    data.total_results = data.total_results ?? data.total_projects ?? data.projects.length;
+}
 
-    if (data.error) { showError(data.error); return; }
-    renderFundingKeywordResults(data);
+hideLoading();
+
+if (data.error) { showError(data.error); return; }
+renderFundingKeywordResults(data);
     } catch (e) {
         showError("Network error: " + e.message);
     }
