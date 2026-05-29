@@ -291,17 +291,20 @@ function renderResearcher(d) {
 function renderFundingKeywordResults(data) {
     if (!data.projects || data.projects.length === 0) {
         resultsEl().innerHTML = renderEmpty("No NIH projects match",
-            `No MCC-related projects found for "${escapeHtml(data.query)}".`);
+            `No MCC-related projects found for "${escapeHtml(data.query || data.name || "")}".`);
         return;
     }
+
+    const totalResults = data.total_results ?? data.total_projects ?? data.projects.length ?? 0;
+    const queryLabel = data.query || data.name || "this search";
+
     let html = `<div class="section-block">`;
     html += `<h2 class="section-title">NIH Funding Results</h2>`;
-    html += `<div class="section-meta">${data.total_results.toLocaleString()} project${data.total_results === 1 ? "" : "s"} matching "<strong>${escapeHtml(data.query)}</strong>" across MCC members</div>`;
+    html += `<div class="section-meta">${totalResults.toLocaleString()} project${totalResults === 1 ? "" : "s"} matching "<strong>${escapeHtml(queryLabel)}</strong>" across MCC members</div>`;
     html += data.projects.map(renderFundingCardKeyword).join("");
     html += `</div>`;
     resultsEl().innerHTML = html;
 }
-
 function renderKeywordResults(data, q, researcherFilter, total) {
     if (!data || data.length === 0) {
         const filterNote = researcherFilter
