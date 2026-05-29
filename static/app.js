@@ -197,23 +197,36 @@ async function searchFundingKeyword() {
 
     // If no result by name, then search by funding keyword/topic
     if (data.error || !data.projects || data.projects.length === 0) {
-    r = await fetch(`/search_funding_keyword?q=${encodeURIComponent(q)}`);
-    data = await r.json();
-}
-
-// Normalize name-search data so the keyword renderer can read it
-if (data.projects) {
-    data.query = data.query || q;
-    data.total_results = data.total_results ?? data.total_projects ?? data.projects.length;
-}
-
-hideLoading();
-
-if (data.error) { showError(data.error); return; }
-renderFundingKeywordResults(data);
-    } catch (e) {
-        showError("Network error: " + e.message);
+        r = await fetch(`/search_funding_keyword?q=${encodeURIComponent(q)}`);
+        data = await r.json();
     }
+
+    // Normalize data so the renderer can read both name-search and keyword-search results
+    if (data.projects) {
+        data.query = data.query || q;
+        data.total_results = data.total_results ?? data.total_projects ?? data.projects.length;
+
+        data.projects = data.projects.map(p => ({
+            ...p,
+            award_amount: p.award_amount ?? 0,
+            fiscal_year: p.fiscal_year ?? "",
+            title: p.title ?? p.project_title ?? "Untitled project",
+            organization: p.organization ?? "",
+            agency: p.agency ?? "",
+            project_num: p.project_num ?? "",
+            start_date: p.start_date ?? "",
+            end_date: p.end_date ?? "",
+            pi_names: p.pi_names ?? data.name ?? ""
+        }));
+    }
+
+    hideLoading();
+
+    if (data.error) { showError(data.error); return; }
+    renderFundingKeywordResults(data);
+
+} catch (e) {
+    showError("Network error: " + e.message);
 }
 
 // ════════════════════════════════════════════════════════════
