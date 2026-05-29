@@ -535,3 +535,37 @@ function escapeHtml(str) {
         .replace(/"/g, "&quot;")
         .replace(/'/g, "&#39;");
 }
+// ════════════════════════════════════════════════════════════════════
+// Click tracking
+// ════════════════════════════════════════════════════════════════════
+function trackClick(elementName) {
+    fetch("/api/track-click", {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+            element: elementName,
+            page: window.location.pathname
+        })
+    }).catch(error => {
+        console.error("Click tracking error:", error);
+    });
+}
+
+document.addEventListener("click", function(event) {
+    const target = event.target.closest("button, a, input[type='submit']");
+
+    if (!target) return;
+
+    let elementName =
+        target.getAttribute("data-track") ||
+        target.innerText ||
+        target.value ||
+        target.href ||
+        "unknown_click";
+
+    elementName = elementName.trim().substring(0, 100);
+
+    trackClick(elementName);
+});
