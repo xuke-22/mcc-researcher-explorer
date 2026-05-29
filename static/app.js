@@ -200,6 +200,7 @@ async function searchFundingKeyword() {
         r = await fetch(`/search_funding_keyword?q=${encodeURIComponent(q)}`);
         data = await r.json();
     }
+}
 
     // Normalize data so the renderer can read both name-search and keyword-search results
     if (data.projects) {
