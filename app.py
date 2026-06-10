@@ -227,8 +227,23 @@ def _build_mcc_name_index():
     return idx
 
 
+def _first_name_matches(author_first: str, member_first: str) -> bool:
+    """Strict first-name check to avoid false positives like Allison/Aaron.
+
+    - If author first name is 1 char (initial only), accept initial match.
+    - If author first name is 2+ chars, require first 2 chars to match.
+    """
+    if not author_first or not member_first:
+        return False
+    if len(author_first) == 1:
+        return author_first[0] == member_first[0]
+    return (author_first[:2] == member_first[:2]
+            or author_first.startswith(member_first)
+            or member_first.startswith(author_first))
+
+
 def _is_mcc_author(author_str: str) -> bool:
-    """Check if an author name matches any MCC member (fuzzy)."""
+    """Check if an author name matches any MCC member (fuzzy but strict on first name)."""
     idx = _build_mcc_name_index()
     author = author_str.lower().strip()
     parts = author.split()
@@ -245,12 +260,8 @@ def _is_mcc_author(author_str: str) -> bool:
             for c_firsts in candidates:
                 if not c_firsts:
                     return True
-                if not first:
-                    continue
                 c_first = c_firsts.split()[0]
-                if first[0] == c_first[0]:
-                    return True
-                if first.startswith(c_first) or c_first.startswith(first):
+                if _first_name_matches(first, c_first):
                     return True
 
         if n > 1:
@@ -261,7 +272,7 @@ def _is_mcc_author(author_str: str) -> bool:
                     if not c_firsts or not first:
                         return True
                     c_first = c_firsts.split()[0]
-                    if first[0] == c_first[0]:
+                    if _first_name_matches(first, c_first):
                         return True
     return False
 
@@ -453,15 +464,49 @@ def _add_wildcards(text: str, join_op: str = " ") -> str:
     return join_op.join(out)
 
 
+_MCC_AUTHOR_TERMS_CACHE = None
+
+
+def _get_mcc_author_terms():
+    """Build PubMed author terms: ORCIDs as [auid] + names as [Author]."""
+    global _MCC_AUTHOR_TERMS_CACHE
+    if _MCC_AUTHOR_TERMS_CACHE is not None:
+        return _MCC_AUTHOR_TERMS_CACHE
+
+    terms = []
+    for m in load_members():
+        # ORCID-based (most precise)
+        if m["orcid"]:
+            terms.append(f'{m["orcid"]}[auid]')
+        # Name-based (catches publications without ORCID tags)
+        name = m["name"]
+        if "," in name:
+            last, first = [s.strip() for s in name.split(",", 1)]
+            first = first.split()[0] if first else ""
+            if first:
+                terms.append(f"{last} {first}[Author]")
+
+    _MCC_AUTHOR_TERMS_CACHE = terms
+    return terms
+
+
 def pubmed_search_by_keyword(keyword: str, researcher: str = "",
                              year_start: str = "", year_end: str = "",
                              retmax: int = 50):
-    """Live PubMed keyword search scoped to Meyer Cancer Center / Weill Cornell."""
-    affil = '("Meyer Cancer Center"[Affiliation] OR "Weill Cornell"[Affiliation])'
+    """Live PubMed keyword search scoped to MCC members via ORCIDs + names.
+
+    Uses both ORCID [auid] and member names [Author] in one query to ensure
+    comprehensive coverage: ORCIDs provide precision, names catch publications
+    without ORCID tags. POST handles the large query (~16KB).
+    """
+    author_terms = _get_mcc_author_terms()
 
     kw_exact = keyword.strip()
     kw_fuzzy = _add_wildcards(kw_exact)
-    term = f"({kw_exact} OR {kw_fuzzy}) AND {affil}"
+    kw_part = f"({kw_exact} OR {kw_fuzzy})"
+
+    member_part = " OR ".join(author_terms)
+    term = f"{kw_part} AND ({member_part})"
 
     if researcher:
         member = find_member_by_name(researcher)
@@ -479,9 +524,11 @@ def pubmed_search_by_keyword(keyword: str, researcher: str = "",
         term += f" AND {mindate}[PDAT]:{maxdate}[PDAT]"
 
     esearch = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
-    params = {"db": "pubmed", "term": term, "retmax": retmax, "retmode": "json",
-              "sort": "date"}
-    r = requests.get(esearch, params=params, timeout=30)
+    # Use POST to handle large member list in query
+    r = requests.post(esearch, data={
+        "db": "pubmed", "term": term, "retmax": retmax,
+        "retmode": "json", "sort": "date",
+    }, timeout=60)
     r.raise_for_status()
     data = r.json().get("esearchresult", {})
     pmids = data.get("idlist", [])

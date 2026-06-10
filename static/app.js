@@ -479,11 +479,15 @@ function buildMccIndex() {
 function _matchFirstName(authorFirst, candidateFirsts) {
     if (!candidateFirsts) return true;
     if (!authorFirst) return false;
-    const aInit = authorFirst.charAt(0);
-    const cParts = candidateFirsts.split(/\s+/);
-    const cFirst = cParts[0];
-    const cInit = cFirst.charAt(0);
-    if (aInit === cInit) return true;
+    const cFirst = candidateFirsts.split(/\s+/)[0];
+    // If author first name is just 1 char (initial), accept initial match
+    if (authorFirst.length === 1) {
+        return authorFirst.charAt(0) === cFirst.charAt(0);
+    }
+    // Otherwise require first 2 chars to match (prevents Allison/Aaron false positives)
+    if (authorFirst.length >= 2 && cFirst.length >= 2) {
+        if (authorFirst.substring(0, 2) === cFirst.substring(0, 2)) return true;
+    }
     if (authorFirst.startsWith(cFirst) || cFirst.startsWith(authorFirst)) return true;
     return false;
 }
