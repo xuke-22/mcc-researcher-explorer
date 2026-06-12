@@ -331,12 +331,13 @@ function renderFundingKeywordResults(data) {
     resultsEl().innerHTML = html;
 }
 function renderKeywordResults(data, q, researcherFilter, total) {
+    const displayQ = _stripQuotes(q);
     if (!data || data.length === 0) {
         const filterNote = researcherFilter
             ? ` for researcher "${escapeHtml(researcherFilter)}"`
             : "";
         resultsEl().innerHTML = renderEmpty("No publications match",
-            `No MCC-affiliated publications found for "${escapeHtml(q)}"${filterNote}.`);
+            `No MCC-affiliated publications found for "${escapeHtml(displayQ)}"${filterNote}.`);
         return;
     }
     let html = `<div class="section-block">`;
@@ -347,7 +348,7 @@ function renderKeywordResults(data, q, researcherFilter, total) {
     const totalLabel = total > data.length
         ? `Showing ${data.length} of ${total.toLocaleString()} MCC publications`
         : `${data.length} MCC publication${data.length === 1 ? "" : "s"}`;
-    html += `<div class="section-meta">${totalLabel} matching "<strong>${escapeHtml(q)}</strong>"${filterLabel} · source: <strong>live PubMed</strong></div>`;
+    html += `<div class="section-meta">${totalLabel} matching "<strong>${escapeHtml(displayQ)}</strong>"${filterLabel} · source: <strong>live PubMed</strong></div>`;
     html += data.map(renderPublicationCard).join("");
     html += `</div>`;
     resultsEl().innerHTML = html;
