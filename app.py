@@ -1017,28 +1017,77 @@ def researcher_combined():
     return jsonify(response)
 
 
+def _parse_nih_keyword(raw: str) -> tuple:
+    """Parse a funding keyword query, respecting quoted exact phrases.
+
+    Returns (search_text, operator):
+      - Quoted phrase like "vitamin d" → exact phrase, operator "and"
+      - Unquoted terms → fuzzy-expanded, operator "or"
+    """
+    import re
+    raw = raw.strip()
+    # Check for quoted exact phrase: "vitamin d" or 'breast cancer'
+    m = re.match(r'^["\'](.+?)["\']$', raw)
+    if m:
+        return m.group(1).strip(), "and"
+    # Unquoted → expand for fuzzy matching
+    return _expand_query_for_nih(raw), "or"
+
+
 @app.route("/search_funding_keyword")
 def search_funding_keyword():
-    """Search NIH funding by keyword/topic across all MCC members."""
+    """Search NIH funding by keyword/topic, with optional PI name filter.
+
+    Query params:
+      q  – project keyword / topic (supports quoted exact phrases)
+      pi – optional PI name filter (fuzzy-matched against MCC roster)
+    """
     q = request.args.get("q", "").strip()
-    if not q:
-        return jsonify({"error": "Please provide a search term."})
+    pi_name = request.args.get("pi", "").strip()
+
+    if not q and not pi_name:
+        return jsonify({"error": "Please provide a keyword or PI name."})
 
     members = load_members()
-    pi_ids = [int(float(m["pi_id"])) for m in members if m["pi_id"]]
+
+    # Determine which PI_IDs to scope to
+    if pi_name:
+        # Find matching MCC member(s)
+        matches = find_members_fuzzy(pi_name, limit=5)
+        if not matches:
+            return jsonify({"error": f"No MCC member found matching '{pi_name}'."})
+        pi_ids = []
+        matched_names = []
+        for match_info in matches:
+            m = match_info["member"]
+            if m["pi_id"]:
+                pi_ids.append(int(float(m["pi_id"])))
+                matched_names.append(m["name"])
+        if not pi_ids:
+            first_name = matches[0]["member"]["name"]
+            return jsonify({
+                "error": f"{first_name} has no NIH PI_ID — no NIH funding records to look up.",
+            })
+    else:
+        pi_ids = [int(float(m["pi_id"])) for m in members if m["pi_id"]]
+        matched_names = []
 
     if not pi_ids:
         return jsonify({"error": "No MCC members with NIH PI_IDs found."})
 
+    # Build NIH Reporter query criteria
+    criteria = {"pi_profile_ids": pi_ids}
+
+    if q:
+        search_text, operator = _parse_nih_keyword(q)
+        criteria["advanced_text_search"] = {
+            "operator": operator,
+            "search_field": "projecttitle,terms,abstracttext",
+            "search_text": search_text,
+        }
+
     payload = {
-        "criteria": {
-            "pi_profile_ids": pi_ids,
-            "advanced_text_search": {
-                "operator": "or",
-                "search_field": "projecttitle,terms,abstracttext",
-                "search_text": _expand_query_for_nih(q),
-            },
-        },
+        "criteria": criteria,
         "include_fields": [
             "ApplId", "FiscalYear", "ProjectNum", "ProjectTitle",
             "ProjectStartDate", "ProjectEndDate",
@@ -1080,6 +1129,7 @@ def search_funding_keyword():
 
     return jsonify({
         "query": q,
+        "pi_filter": ", ".join(matched_names) if matched_names else "",
         "total_results": total,
         "projects": projects,
     })

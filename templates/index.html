@@ -99,12 +99,16 @@
     <section class="tab-panel" id="panel-funding">
         <div class="panel-header">
             <h2>NIH Funding Search</h2>
-            <p>Search NIH-funded projects across MCC members by topic or keyword.</p>
+            <p>Search NIH-funded projects across MCC members. Filter by PI name, project keyword, or both.</p>
         </div>
         <div class="search-bar">
-            <input type="text" id="fundingKeywordInput" class="search-input" placeholder="Search by topic, e.g. vitamin D, breast cancer, immunotherapy">
+            <input type="text" id="fundingKeywordInput" class="search-input" placeholder="Project keyword or topic, e.g. vitamin D, breast cancer, immunotherapy">
             <button class="btn-primary" onclick="searchFundingKeyword()">Search</button>
         </div>
+        <div class="search-bar keyword-researcher-bar">
+            <input type="text" id="fundingPIInput" class="search-input search-input-sm" placeholder="Filter by PI name (optional), e.g. Tamimi, Rulla">
+        </div>
+        <p class="search-hint">Tip: Use quotation marks for exact phrase searches. For example, search <strong>"vitamin d"</strong> or <strong>"breast cancer"</strong> to keep words together.</p>
     </section>
 
     <!-- ─── Results ─────────────── -->

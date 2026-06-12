@@ -46,6 +46,7 @@ function initEnterKey() {
     bindEnter("keywordInput", searchKeyword);
     bindEnter("keywordResearcherInput", searchKeyword);
     bindEnter("fundingKeywordInput", searchFundingKeyword);
+    bindEnter("fundingPIInput", searchFundingKeyword);
 }
 function bindEnter(id, fn) {
     const el = $(id);
@@ -184,31 +185,34 @@ async function searchKeyword() {
     }
 }
 
-// ─── Search: NIH funding by keyword/topic ───────────────
+// ─── Search: NIH funding by keyword/topic + optional PI filter ──
 async function searchFundingKeyword() {
     const q = $("fundingKeywordInput").value.trim();
-    if (!q) {
-        showError("Please enter a researcher name, topic, or keyword.");
+    const piFilter = $("fundingPIInput") ? $("fundingPIInput").value.trim() : "";
+
+    if (!q && !piFilter) {
+        showError("Please enter a keyword, PI name, or both.");
         return;
     }
 
     showLoading();
 
     try {
-        // First try to search by researcher / PI name
-        let r = await fetch(`/search_funding?name=${encodeURIComponent(q)}`);
+        // Build URL with keyword and optional PI filter
+        let url = `/search_funding_keyword?`;
+        const params = [];
+        if (q) params.push(`q=${encodeURIComponent(q)}`);
+        if (piFilter) params.push(`pi=${encodeURIComponent(piFilter)}`);
+        url += params.join("&");
+
+        const r = await fetch(url);
         let data = await r.json();
 
-        // If no result by name, then search by funding keyword/topic
-        if (data.error || !data.projects || data.projects.length === 0) {
-            r = await fetch(`/search_funding_keyword?q=${encodeURIComponent(q)}`);
-            data = await r.json();
-        }
-
-        // Normalize data so the renderer can read both name-search and keyword-search results
+        // Normalize data so the renderer can read the results
         if (data.projects) {
             data.query = data.query || q;
-            data.total_results = data.total_results ?? data.total_projects ?? data.projects.length;
+            data.pi_filter = data.pi_filter || piFilter;
+            data.total_results = data.total_results ?? data.projects.length;
 
             data.projects = data.projects.map(p => ({
                 ...p,
@@ -298,17 +302,26 @@ function renderResearcher(d) {
 
 function renderFundingKeywordResults(data) {
     if (!data.projects || data.projects.length === 0) {
+        const queryLabel = data.query ? `"${escapeHtml(data.query)}"` : "";
+        const piLabel = data.pi_filter ? ` for PI "${escapeHtml(data.pi_filter)}"` : "";
         resultsEl().innerHTML = renderEmpty("No NIH projects match",
-            `No MCC-related projects found for "${escapeHtml(data.query || data.name || "")}".`);
+            `No MCC-related projects found${queryLabel ? ` matching ${queryLabel}` : ""}${piLabel}.`);
         return;
     }
 
     const totalResults = data.total_results ?? data.total_projects ?? data.projects.length ?? 0;
-    const queryLabel = data.query || data.name || "this search";
+    const queryLabel = data.query || "";
+    const piLabel = data.pi_filter || "";
+
+    let metaParts = [];
+    metaParts.push(`${totalResults.toLocaleString()} project${totalResults === 1 ? "" : "s"}`);
+    if (queryLabel) metaParts.push(`matching "<strong>${escapeHtml(queryLabel)}</strong>"`);
+    if (piLabel) metaParts.push(`PI: <strong>${escapeHtml(piLabel)}</strong>`);
+    if (!piLabel) metaParts.push("across MCC members");
 
     let html = `<div class="section-block">`;
     html += `<h2 class="section-title">NIH Funding Results</h2>`;
-    html += `<div class="section-meta">${totalResults.toLocaleString()} project${totalResults === 1 ? "" : "s"} matching "<strong>${escapeHtml(queryLabel)}</strong>" across MCC members</div>`;
+    html += `<div class="section-meta">${metaParts.join(" · ")}</div>`;
     html += data.projects.map(renderFundingCardKeyword).join("");
     html += `</div>`;
     resultsEl().innerHTML = html;
