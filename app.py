@@ -502,8 +502,13 @@ def pubmed_search_by_keyword(keyword: str, researcher: str = "",
     author_terms = _get_mcc_author_terms()
 
     kw_exact = keyword.strip()
-    kw_fuzzy = _add_wildcards(kw_exact)
-    kw_part = f"({kw_exact} OR {kw_fuzzy})"
+    # If user quoted an exact phrase, skip fuzzy expansion — PubMed
+    # handles quoted phrases natively as exact matches.
+    if kw_exact.startswith('"') and kw_exact.endswith('"'):
+        kw_part = kw_exact
+    else:
+        kw_fuzzy = _add_wildcards(kw_exact)
+        kw_part = f"({kw_exact} OR {kw_fuzzy})"
 
     member_part = " OR ".join(author_terms)
     term = f"{kw_part} AND ({member_part})"
