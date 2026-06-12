@@ -300,9 +300,13 @@ function renderResearcher(d) {
     resultsEl().innerHTML = html;
 }
 
+function _stripQuotes(s) {
+    return s.replace(/^["']+|["']+$/g, "");
+}
+
 function renderFundingKeywordResults(data) {
     if (!data.projects || data.projects.length === 0) {
-        const queryLabel = data.query ? `"${escapeHtml(data.query)}"` : "";
+        const queryLabel = data.query ? `"${escapeHtml(_stripQuotes(data.query))}"` : "";
         const piLabel = data.pi_filter ? ` for PI "${escapeHtml(data.pi_filter)}"` : "";
         resultsEl().innerHTML = renderEmpty("No NIH projects match",
             `No MCC-related projects found${queryLabel ? ` matching ${queryLabel}` : ""}${piLabel}.`);
@@ -310,7 +314,7 @@ function renderFundingKeywordResults(data) {
     }
 
     const totalResults = data.total_results ?? data.total_projects ?? data.projects.length ?? 0;
-    const queryLabel = data.query || "";
+    const queryLabel = _stripQuotes(data.query || "");
     const piLabel = data.pi_filter || "";
 
     let metaParts = [];

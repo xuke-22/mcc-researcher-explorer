@@ -1020,18 +1020,57 @@ def researcher_combined():
 def _parse_nih_keyword(raw: str) -> tuple:
     """Parse a funding keyword query, respecting quoted exact phrases.
 
-    Returns (search_text, operator):
+    Returns (search_text, operator, exact_phrases):
       - Quoted phrase like "vitamin d" → exact phrase, operator "and"
       - Unquoted terms → fuzzy-expanded, operator "or"
+      exact_phrases is a list of lowered phrases the user explicitly quoted.
     """
     import re
     raw = raw.strip()
     # Check for quoted exact phrase: "vitamin d" or 'breast cancer'
     m = re.match(r'^["\'](.+?)["\']$', raw)
     if m:
-        return m.group(1).strip(), "and"
-    # Unquoted → expand for fuzzy matching
-    return _expand_query_for_nih(raw), "or"
+        phrase = m.group(1).strip()
+        # For hyphenated terms like GLP-1, also add parts without hyphen
+        # so the NIH API can actually find something (it ignores "GLP-1")
+        search_parts = [phrase]
+        if "-" in phrase:
+            search_parts.extend(p for p in phrase.split("-") if len(p) >= 2)
+        return " ".join(search_parts), "and", [phrase.lower()]
+    # Unquoted → expand for fuzzy matching; also add de-hyphenated parts
+    expanded = _expand_query_for_nih(raw)
+    for w in raw.split():
+        if "-" in w:
+            for part in w.split("-"):
+                if len(part) >= 2:
+                    expanded += " " + part
+    return expanded, "or", []
+
+
+def _nih_project_matches_keyword(project: dict, keywords: list,
+                                  exact_phrases: list) -> bool:
+    """Server-side check that a project actually contains the keyword(s).
+
+    The NIH Reporter API sometimes ignores text filters for certain terms
+    (especially hyphenated like GLP-1). This post-filter catches those cases.
+    """
+    # Build searchable text from title, terms, and abstract
+    parts = [
+        project.get("project_title") or "",
+        project.get("terms") or "",
+        project.get("abstract_text") or "",
+    ]
+    haystack = " ".join(parts).lower()
+
+    # If user quoted an exact phrase, require it
+    if exact_phrases:
+        return all(phrase in haystack for phrase in exact_phrases)
+
+    # For unquoted search: require at least one keyword to appear
+    if keywords:
+        return any(kw in haystack for kw in keywords)
+
+    return True
 
 
 @app.route("/search_funding_keyword")
@@ -1078,13 +1117,28 @@ def search_funding_keyword():
     # Build NIH Reporter query criteria
     criteria = {"pi_profile_ids": pi_ids}
 
+    # Parse keyword, get exact phrases for post-filtering
+    exact_phrases = []
+    plain_keywords = []
     if q:
-        search_text, operator = _parse_nih_keyword(q)
+        search_text, operator, exact_phrases = _parse_nih_keyword(q)
         criteria["advanced_text_search"] = {
             "operator": operator,
             "search_field": "projecttitle,terms,abstracttext",
             "search_text": search_text,
         }
+        # For unquoted queries, extract the original words for post-filter.
+        # Include the full term (e.g. "glp-1") plus individual words ≥2 chars.
+        if not exact_phrases:
+            plain_keywords = [q.lower()]
+            plain_keywords.extend(
+                w.lower() for w in q.split() if len(w) >= 2 and w.lower() != q.lower()
+            )
+
+    # Request extra results so we have enough after post-filtering.
+    # NIH API ignores certain terms (hyphenated like GLP-1), so we
+    # fetch more and post-filter to find actual matches.
+    fetch_limit = 500 if q else 50
 
     payload = {
         "criteria": criteria,
@@ -1095,7 +1149,7 @@ def search_funding_keyword():
             "AbstractText", "Terms",
         ],
         "offset": 0,
-        "limit": 50,
+        "limit": fetch_limit,
         "sort_field": "fiscal_year",
         "sort_order": "desc",
     }
@@ -1106,11 +1160,18 @@ def search_funding_keyword():
     except Exception as e:
         return jsonify({"error": f"NIH Reporter API error: {e}"})
 
-    results = data.get("results") or []
-    total = (data.get("meta") or {}).get("total", 0)
+    raw_results = data.get("results") or []
+
+    # Post-filter: verify keyword actually appears in project data
+    # (NIH API sometimes ignores text filters for hyphenated terms like GLP-1)
+    if q:
+        raw_results = [
+            p for p in raw_results
+            if _nih_project_matches_keyword(p, plain_keywords, exact_phrases)
+        ]
 
     projects = []
-    for p in results:
+    for p in raw_results[:50]:
         org = (p.get("organization") or {}).get("org_name", "") or ""
         agency = (p.get("agency_ic_admin") or {}).get("name", "") or ""
         pis = p.get("principal_investigators") or []
@@ -1130,7 +1191,7 @@ def search_funding_keyword():
     return jsonify({
         "query": q,
         "pi_filter": ", ".join(matched_names) if matched_names else "",
-        "total_results": total,
+        "total_results": len(projects),
         "projects": projects,
     })
 
