@@ -490,9 +490,8 @@ def _get_mcc_author_terms():
     return terms
 
 
-def pubmed_search_by_keyword(keyword: str, researcher: str = "",
-                             year_start: str = "", year_end: str = "",
-                             retmax: int = 50):
+def pubmed_search_by_keyword(keyword: str, year_start: str = "",
+                             year_end: str = "", retmax: int = 50):
     """Live PubMed keyword search scoped to MCC members via ORCIDs + names.
 
     Uses both ORCID [auid] and member names [Author] in one query to ensure
@@ -512,16 +511,6 @@ def pubmed_search_by_keyword(keyword: str, researcher: str = "",
 
     member_part = " OR ".join(author_terms)
     term = f"{kw_part} AND ({member_part})"
-
-    if researcher:
-        member = find_member_by_name(researcher)
-        rname = member["name"] if member else researcher
-        if "," in rname:
-            last, first = [s.strip() for s in rname.split(",", 1)]
-            first = first.split()[0] if first else ""
-            term += f' AND {last} {first}[Author]'
-        else:
-            term += f" AND {rname}[Author]"
 
     if year_start or year_end:
         mindate = year_start or "2000"
@@ -825,8 +814,7 @@ def search_keyword():
 
     try:
         pubs, total = pubmed_search_by_keyword(
-            q, researcher=researcher,
-            year_start=year_start, year_end=year_end,
+            q, year_start=year_start, year_end=year_end,
             retmax=100,
         )
     except Exception as e:
@@ -835,6 +823,15 @@ def search_keyword():
 
     # Keep only publications with at least one MCC member as author
     pubs = [p for p in pubs if _pub_has_mcc_author(p)]
+
+    # Apply researcher filter as post-filter on the author string.
+    # This handles middle names (e.g. "todd" matches "Christopher Todd
+    # Hackett") which PubMed's [Author] tag can't do when combined with
+    # the MCC member author terms.
+    if researcher:
+        r_lower = researcher.lower()
+        pubs = [p for p in pubs
+                if r_lower in p.get("authors", "").lower()]
 
     return jsonify({"publications": pubs[:50], "total": total})
 
