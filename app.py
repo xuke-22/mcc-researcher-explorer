@@ -278,7 +278,37 @@ def _is_mcc_author(author_str: str) -> bool:
 
 
 def _pub_has_mcc_author(pub: dict) -> bool:
-    """Return True if at least one author in the publication is an MCC member."""
+    """Return True if at least one author in the publication is an MCC member.
+
+    Uses multiple signals in priority order:
+      1. ORCID match (author's embedded ORCID matches an MCC member's)
+      2. Name match + Weill Cornell affiliation
+      3. Name match alone (for papers without affiliation data)
+    """
+    # Build ORCID lookup for MCC members
+    mcc_orcids = {m["orcid"] for m in load_members() if m["orcid"]}
+
+    author_details = pub.get("author_details", [])
+    if author_details:
+        for ad in author_details:
+            # Signal 1: ORCID match — strongest evidence
+            if ad.get("orcid") and ad["orcid"] in mcc_orcids:
+                return True
+            # Signal 2: Name match + WCM affiliation
+            if ad.get("name") and _is_mcc_author(ad["name"]):
+                aff = (ad.get("affiliation") or "").lower()
+                if _is_wcm_affiliation(aff):
+                    return True
+        # Signal 3: Name match without affiliation data (fallback)
+        for ad in author_details:
+            if ad.get("name") and _is_mcc_author(ad["name"]):
+                aff = (ad.get("affiliation") or "").lower()
+                if not aff:
+                    # No affiliation info — accept name match
+                    return True
+        return False
+
+    # Fallback: no author_details, use the old string-based check
     authors_str = pub.get("authors", "")
     if not authors_str:
         return False
@@ -286,6 +316,131 @@ def _pub_has_mcc_author(pub: dict) -> bool:
         author = author.strip()
         if author and _is_mcc_author(author):
             return True
+    return False
+
+
+# Common patterns for Weill Cornell Medicine affiliations
+_WCM_AFF_PATTERNS = [
+    "weill cornell", "cornell medical", "meyer cancer",
+    "memorial sloan", "mskcc", "new york presbyterian",
+    "nyp", "newyork-presbyterian",
+]
+
+
+def _is_wcm_affiliation(aff_lower: str) -> bool:
+    """Check if an affiliation string indicates WCM/MCC/MSK."""
+    if not aff_lower:
+        return False
+    return any(pat in aff_lower for pat in _WCM_AFF_PATTERNS)
+
+
+def _get_orcid_confirmed_pmids(orcid: str) -> set:
+    """Query PubMed for PMIDs linked to a specific ORCID."""
+    if not orcid:
+        return set()
+    try:
+        r = requests.get(
+            "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi",
+            params={"db": "pubmed", "term": f"{orcid}[auid]",
+                    "retmax": 500, "retmode": "json"},
+            timeout=15)
+        r.raise_for_status()
+        return set(r.json().get("esearchresult", {}).get("idlist", []))
+    except Exception:
+        return set()
+
+
+def _pub_matches_researcher(pub: dict, researcher: str,
+                            member: dict = None) -> bool:
+    """Check if a publication is genuinely by the specified researcher.
+
+    When the MCC member is known (resolved from roster):
+      1. ORCID-confirmed PMID → accept
+      2. Author ORCID in XML matches member's ORCID → accept
+      3. Name match + WCM affiliation → accept
+      4. Name match + no affiliation data → accept (benefit of doubt)
+      5. Name match + non-WCM affiliation → REJECT (likely different person)
+
+    When no member is resolved, just check if the search text appears
+    in any author name (for middle-name searches like "todd").
+    """
+    r_lower = researcher.lower().strip()
+
+    if not member:
+        # No specific member resolved (single-word search like "todd").
+        # Check if any author with a matching name has WCM affiliation
+        # or at least no conflicting affiliation.
+        author_details = pub.get("author_details", [])
+        if author_details:
+            for ad in author_details:
+                a_name = (ad.get("name") or "").lower()
+                if r_lower not in a_name:
+                    continue
+                # Name matches — also must be MCC author
+                if not _is_mcc_author(ad["name"]):
+                    continue
+                a_aff = (ad.get("affiliation") or "").lower()
+                # WCM affiliation or no affiliation: accept
+                if not a_aff or _is_wcm_affiliation(a_aff):
+                    return True
+                # Non-WCM affiliation: reject this author
+            return False
+        # No author_details — fall back to substring
+        return r_lower in pub.get("authors", "").lower()
+
+    # We have a specific MCC member
+    member_orcid = member.get("orcid", "")
+    member_name = member.get("name", "")
+
+    # Parse member name parts for matching
+    if "," in member_name:
+        m_last, m_first_full = [s.strip() for s in member_name.split(",", 1)]
+        m_first = m_first_full.split()[0] if m_first_full else ""
+    else:
+        parts = member_name.split()
+        m_last = parts[-1] if parts else ""
+        m_first = parts[0] if len(parts) > 1 else ""
+    m_last_lower = m_last.lower()
+    m_first_lower = m_first.lower()
+
+    author_details = pub.get("author_details", [])
+    if not author_details:
+        # No detailed data — fall back to substring match
+        return r_lower in pub.get("authors", "").lower()
+
+    for ad in author_details:
+        a_name = (ad.get("name") or "").lower()
+        a_orcid = ad.get("orcid") or ""
+        a_aff = (ad.get("affiliation") or "").lower()
+
+        # Check if this author could be the member
+        # First: does the name match?
+        name_parts = a_name.split()
+        if len(name_parts) < 2:
+            continue
+        a_last = name_parts[-1]
+        a_first = name_parts[0]
+
+        if a_last != m_last_lower:
+            continue
+        if not _first_name_matches(a_first, m_first_lower):
+            continue
+
+        # Name matches. Now verify:
+        # 1. ORCID match in XML → confirmed
+        if member_orcid and a_orcid == member_orcid:
+            return True
+
+        # 2. WCM affiliation → very likely the right person
+        if _is_wcm_affiliation(a_aff):
+            return True
+
+        # 3. No affiliation data → accept (can't disprove)
+        if not a_aff:
+            return True
+
+        # 4. Non-WCM affiliation → likely different person, skip
+
     return False
 
 
@@ -592,11 +747,27 @@ def _parse_pubmed_xml(xml_text: str):
         journal = art.findtext(".//Journal/Title", default="")
         pub_date, iso_date = _extract_date(art)
         authors = []
+        author_details = []  # [{name, orcid, affiliation}, ...]
         for au in art.findall(".//Author"):
             ln = au.findtext("LastName", default="")
             fn = au.findtext("ForeName", default="")
             if ln:
-                authors.append(f"{fn} {ln}".strip())
+                full = f"{fn} {ln}".strip()
+                authors.append(full)
+                orcid_el = au.find(".//Identifier[@Source='ORCID']")
+                orcid_val = ""
+                if orcid_el is not None and orcid_el.text:
+                    # Normalize: strip URL prefix if present
+                    orcid_val = orcid_el.text.strip().replace(
+                        "http://orcid.org/", "").replace(
+                        "https://orcid.org/", "")
+                affs = [a.text for a in au.findall(
+                    ".//AffiliationInfo/Affiliation") if a.text]
+                author_details.append({
+                    "name": full,
+                    "orcid": orcid_val,
+                    "affiliation": "; ".join(affs),
+                })
         doi = ""
         for aid in art.findall(".//ArticleId"):
             if aid.attrib.get("IdType") == "doi":
@@ -606,6 +777,7 @@ def _parse_pubmed_xml(xml_text: str):
             "pmid": pmid, "title": title, "abstract": abstract,
             "authors": "; ".join(authors), "journal": journal,
             "pub_date": pub_date, "iso_date": iso_date, "doi": doi,
+            "author_details": author_details,
         })
     # Sort newest first
     out.sort(key=lambda p: (p.get("iso_date") or "", p.get("pmid") or ""), reverse=True)
@@ -824,14 +996,34 @@ def search_keyword():
     # Keep only publications with at least one MCC member as author
     pubs = [p for p in pubs if _pub_has_mcc_author(p)]
 
-    # Apply researcher filter as post-filter on the author string.
-    # This handles middle names (e.g. "todd" matches "Christopher Todd
-    # Hackett") which PubMed's [Author] tag can't do when combined with
-    # the MCC member author terms.
+    # Apply researcher filter with ORCID + affiliation verification.
     if researcher:
-        r_lower = researcher.lower()
-        pubs = [p for p in pubs
-                if r_lower in p.get("authors", "").lower()]
+        r_text = researcher.strip()
+        # Determine if this looks like a specific name (has comma or
+        # multiple words) vs a single partial term like "todd" or "neal"
+        is_specific = "," in r_text or len(r_text.split()) >= 2
+        member = find_member_by_name(r_text) if is_specific else None
+
+        if member and member.get("orcid"):
+            confirmed = _get_orcid_confirmed_pmids(member["orcid"])
+        else:
+            confirmed = set()
+
+        filtered = []
+        for p in pubs:
+            pmid = p.get("pmid", "")
+            # ORCID-confirmed PMID — definitely this member's paper
+            if confirmed and pmid in confirmed:
+                filtered.append(p)
+                continue
+            # Use name + affiliation matching
+            if _pub_matches_researcher(p, r_text, member):
+                filtered.append(p)
+        pubs = filtered
+
+    # Strip author_details from response (internal use only)
+    for p in pubs:
+        p.pop("author_details", None)
 
     return jsonify({"publications": pubs[:50], "total": total})
 
