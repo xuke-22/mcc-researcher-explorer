@@ -1282,28 +1282,38 @@ def search_funding_keyword():
         return jsonify({"error": "Please provide a keyword or PI name."})
 
     members = load_members()
+    all_pi_ids = [int(float(m["pi_id"])) for m in members if m["pi_id"]]
 
-    # Determine which PI_IDs to scope to
-    if pi_name:
-        # Find matching MCC member(s)
+    # Determine query scope and PI post-filter
+    pi_post_filter = ""  # text to match against PI names in results
+    matched_names = []
+
+    if pi_name and not q:
+        # PI-only search: scope API to that member's PI_ID(s)
         matches = find_members_fuzzy(pi_name, limit=5)
         if not matches:
             return jsonify({"error": f"No MCC member found matching '{pi_name}'."})
         pi_ids = []
-        matched_names = []
         for match_info in matches:
             m = match_info["member"]
             if m["pi_id"]:
                 pi_ids.append(int(float(m["pi_id"])))
                 matched_names.append(m["name"])
         if not pi_ids:
-            first_name = matches[0]["member"]["name"]
             return jsonify({
-                "error": f"{first_name} has no NIH PI_ID — no NIH funding records to look up.",
+                "error": f"{matches[0]['member']['name']} has no NIH PI_ID.",
             })
+    elif pi_name and q:
+        # Keyword + PI filter: search ALL MCC members for the keyword,
+        # then post-filter by PI name. This is necessary because a
+        # project may list multiple PIs — the user-typed name might be
+        # a co-PI found via another MCC member's PI_ID.
+        pi_ids = all_pi_ids
+        pi_post_filter = pi_name.lower().strip()
+        matched_names = [pi_name]  # Show the user's search text
     else:
-        pi_ids = [int(float(m["pi_id"])) for m in members if m["pi_id"]]
-        matched_names = []
+        # Keyword-only: search all MCC members
+        pi_ids = all_pi_ids
 
     if not pi_ids:
         return jsonify({"error": "No MCC members with NIH PI_IDs found."})
@@ -1363,6 +1373,22 @@ def search_funding_keyword():
             p for p in raw_results
             if _nih_project_matches_keyword(p, plain_keywords, exact_phrases)
         ]
+
+    # Post-filter: PI name filter on the returned PI names.
+    # This catches co-PI relationships that the API pi_profile_ids can't
+    # scope directly (e.g. "Laura" appears as a co-PI on a project found
+    # via another MCC member's PI_ID).
+    if pi_post_filter:
+        filtered = []
+        for p in raw_results:
+            pis = p.get("principal_investigators") or []
+            pi_name_str = " ".join(
+                pi.get("full_name", "") for pi in pis
+                if isinstance(pi, dict)
+            ).lower()
+            if pi_post_filter in pi_name_str:
+                filtered.append(p)
+        raw_results = filtered
 
     projects = []
     for p in raw_results[:50]:
